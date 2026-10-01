@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PeerDrop — Direct WiFi File Sharing</title>
+  <meta name="description" content="Share files directly over WiFi. No internet. No cloud. Browser to browser." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <link rel="manifest" href="/manifest.json" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ────────────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand" onclick="window.location='/'">
+        <div class="brand-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">PeerDrop</span>
+          <span class="brand-tag">Direct WiFi · Zero Cloud</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="wifi-indicator" id="wifi-indicator">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>
+          <span id="wifi-label">📶 WiFi Ready</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════
+       HOME SCREEN
+  ════════════════════════════════════════════════════════════ -->
+  <section id="screen-home" class="screen active">
+
+    <div class="home-hero">
+      <div class="security-pill">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Direct P2P · No Cloud · No Internet
+      </div>
+      <h1 class="home-title">Browser to Browser<br><span class="home-grad">Instant Transfer</span></h1>
+      <p class="home-sub">Files go directly from sender's browser to receiver's browser over WiFi. Zero cloud servers.</p>
+    </div>
+
+    <!-- Architecture Diagram -->
+    <div class="arch-diagram">
+      <div class="arch-node">📱 Sender</div>
+      <div class="arch-arrow">→ WiFi →</div>
+      <div class="arch-node arch-active">🌐 Browser P2P</div>
+      <div class="arch-arrow">→ WiFi →</div>
+      <div class="arch-node">📱 Receiver</div>
+    </div>
+    <p class="arch-caption">No cloud server in between. Data never leaves your local network.</p>
+
+    <!-- Big Send / Receive Actions -->
+    <div class="main-actions">
+      <button class="main-card send-card" id="send-open-btn">
+        <div class="mc-icon-ring send-ring">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/>
+          </svg>
+        </div>
+        <div class="mc-label">Send Files</div>
+        <div class="mc-desc">Select files &amp; scan receiver's QR</div>
+        <div class="mc-badge">📷 Scan QR to Send</div>
+      </button>
+
+      <button class="main-card recv-card" id="recv-create-btn">
+        <div class="mc-icon-ring recv-ring">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </div>
+        <div class="mc-label">Receive Files</div>
+        <div class="mc-desc">Show QR for sender to scan</div>
+        <div class="mc-badge">📥 Make QR to Receive</div>
+      </button>
+    </div>
+
+    <!-- Send Panel -->
+    <div class="recv-panel hidden" id="send-panel">
+      <div class="recv-options">
+        <p class="panel-section-title">Step 1: Choose files, then Scan Receiver's QR</p>
+        <button class="btn-select-files" id="send-pick-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span id="selected-files-label">Select Files to Send</span>
+        </button>
+        <input type="file" id="pre-send-file-input" multiple hidden />
+        <button class="btn-camera-scan" id="open-camera-btn">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          📷 Scan Receiver's QR Code
+        </button>
+        <div class="ac-divider"><span>or enter receiver's code</span></div>
+        <div class="recv-panel-row">
+          <input id="join-input" class="code-input" type="text" maxlength="6" placeholder="A1B2C3" autocomplete="off" spellcheck="false" />
+          <button class="join-go-btn" id="join-btn" title="Connect">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+        <button class="btn-text-link" id="sender-make-qr-link">Or show my QR code instead →</button>
+      </div>
+    </div>
+
+    <!-- WiFi Setup Guide -->
+    <div class="wlan-guide-card">
+      <div class="wg-icon">📶</div>
+      <div class="wg-content">
+        <h4 class="wg-title">How it Works (No Internet Needed):</h4>
+        <p class="wg-desc">
+          <strong>1.</strong> Both devices connect to the <strong>same WiFi network</strong><br>
+          <strong>2.</strong> <strong>Receiver:</strong> Tap Receive Files → QR appears<br>
+          <strong>3.</strong> <strong>Sender:</strong> Tap Send Files → Select files → Scan QR<br>
+          <strong>4.</strong> Files transfer <strong>directly browser-to-browser</strong> over WiFi!
+        </p>
+        <p class="wg-note">💡 <strong>No WiFi router?</strong> Turn on Mobile Hotspot on one phone, connect the other to it. Then open this page on both devices!</p>
+      </div>
+    </div>
+
+    <!-- Features strip -->
+    <div class="feat-strip">
+      <div class="feat-item"><span class="feat-dot green"></span>Zero Internet</div>
+      <div class="feat-sep">·</div>
+      <div class="feat-item"><span class="feat-dot purple"></span>10–40 MB/s</div>
+      <div class="feat-sep">·</div>
+      <div class="feat-item"><span class="feat-dot teal"></span>E2E Encrypted</div>
+      <div class="feat-sep">·</div>
+      <div class="feat-item"><span class="feat-dot amber"></span>Zero Cloud</div>
+    </div>
+
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       WAITING SCREEN
+  ════════════════════════════════════════════════════════════ -->
+  <section id="screen-waiting" class="screen">
+    <div class="waiting-card">
+      <div class="wc-pulse-row">
+        <span class="wc-pulse-ring"></span>
+        <span class="wc-pulse-ring wc-ring2"></span>
+        <span class="wc-pulse-dot"></span>
+      </div>
+      <p id="waiting-status" class="wc-status">Waiting for peer…</p>
+      <div class="qr-container">
+        <div id="qr-code" class="qr-wrap"></div>
+        <p class="qr-scan-instruction" id="qr-instruction-text">📷 Scan this QR with the other device</p>
+      </div>
+      <div class="wc-code-block">
+        <p class="wc-code-label">PAIRING CODE</p>
+        <div class="wc-code-row">
+          <span id="room-code-display" class="wc-code">——————</span>
+          <button class="copy-btn" id="copy-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy
+          </button>
+        </div>
+      </div>
+      <p class="wc-hint" id="local-ip-hint">WiFi Address: <span id="local-ip-badge">Detecting…</span></p>
+      <button class="btn-ghost-sm" id="back-btn">← Cancel &amp; Go Back</button>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       TRANSFER SCREEN
+  ════════════════════════════════════════════════════════════ -->
+  <section id="screen-transfer" class="screen">
+    <div class="tf-topbar">
+      <div class="tf-badges">
+        <div class="status-badge" id="conn-badge"><span class="status-dot"></span>Connected</div>
+        <div class="mode-badge wlan" id="mode-badge">📶 Direct WiFi P2P</div>
+      </div>
+      <div class="tf-topbar-actions">
+        <button class="btn-ghost-sm" id="conn-info-btn" title="Show pairing code / reconnect">🔗 Connection Info</button>
+        <button class="btn-ghost-sm" id="new-session-btn">← Back to Home</button>
+      </div>
+    </div>
+
+    <!-- Data flow indicator -->
+    <div class="data-flow-bar">
+      <span>📱 Sender</span>
+      <span class="flow-arrow">⟶ WiFi ⟶</span>
+      <span>📱 Receiver</span>
+      <span class="flow-label">(No cloud, no internet)</span>
+    </div>
+
+    <div class="dropzone" id="dropzone">
+      <div class="dz-inner">
+        <div class="dz-icon-wrap">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p class="dz-title">Drop files here to send</p>
+        <p class="dz-sub">Files go directly to the other browser · No upload to any server</p>
+        <button class="dz-browse-btn" id="browse-btn">Browse Files</button>
+        <input type="file" id="file-input" multiple hidden />
+      </div>
+    </div>
+
+    <div class="transfer-list" id="transfer-list"></div>
+
+    <div id="done-bar" class="done-bar hidden">
+      <div class="done-left">
+        <div class="done-check-circle">✓</div>
+        <div>
+          <div class="done-title">Transfer Complete!</div>
+          <div class="done-sub">Files transferred directly browser-to-browser</div>
+        </div>
+      </div>
+      <button class="ac-btn ac-btn-primary" id="done-btn">Done — Go Home</button>
+    </div>
+  </section>
+
+</div><!-- #app -->
+
+<!-- ── Camera QR Scanner Modal ──────────────────────────────── -->
+<div id="camera-overlay" class="permission-overlay hidden">
+  <div class="scanner-modal">
+    <div class="scanner-header">
+      <div class="scanner-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span id="scanner-modal-title">Scan Receiver's QR Code</span>
+      </div>
+      <button class="scanner-close" id="close-camera-btn">✕</button>
+    </div>
+    <div class="viewfinder-container">
+      <div id="qr-reader"></div>
+      <div class="laser-scanner"></div>
+    </div>
+    <p class="scanner-status" id="scanner-status">Align QR code within frame</p>
+    <button class="btn-ghost-sm" id="switch-camera-btn">🔄 Switch Camera</button>
+  </div>
+</div>
+
+<!-- ── Receiver Permission Modal ────────────────────────────── -->
+<div id="permission-overlay" class="permission-overlay hidden">
+  <div class="permission-modal">
+    <p class="pm-badge">🔒 Direct WiFi Transfer Request</p>
+    <div class="pm-icon" id="pm-icon">📁</div>
+    <p class="pm-name" id="pm-name">filename.pdf</p>
+    <p class="pm-size" id="pm-size">2.4 MB</p>
+    <p class="pm-from">Peer on your WiFi wants to send this file directly</p>
+    <div class="pm-actions">
+      <button class="pm-btn pm-reject" id="pm-reject">✕ Reject</button>
+      <button class="pm-btn pm-accept" id="pm-accept">✓ Accept &amp; Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Connection Info Modal ─────────────────────────────────── -->
+<div id="connection-info-overlay" class="permission-overlay hidden">
+  <div class="permission-modal">
+    <p class="pm-badge">🔗 Connection Info</p>
+    <div class="wc-code-block">
+      <p class="wc-code-label">PAIRING CODE</p>
+      <div class="wc-code-row">
+        <span id="ci-code-display" class="wc-code">——————</span>
+        <button class="copy-btn" id="ci-copy-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy
+        </button>
+      </div>
+    </div>
+    <div id="ci-qr-box" class="qr-panel hidden">
+      <div id="ci-qr-code" class="qr-wrap"></div>
+      <p class="qr-scan-instruction">📷 Other device can scan this to (re)connect</p>
+    </div>
+    <p class="pm-from" id="ci-note">If the connection drops mid-transfer, use this to reconnect without starting over.</p>
+    <div class="pm-actions">
+      <button class="pm-btn pm-reject" id="ci-close-btn">Close</button>
+      <button class="pm-btn pm-accept" id="ci-reconnect-btn">🔄 Reconnect</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Disconnect Popup ──────────────────────────────────────── -->
+<div id="disconnect-overlay" class="permission-overlay hidden">
+  <div class="disconnect-modal">
+    <div class="dc-pulse-ring-wrap">
+      <span class="dc-ring r1"></span>
+      <span class="dc-ring r2"></span>
+      <div class="dc-icon">📡</div>
+    </div>
+    <h3 class="dc-title">Connection Lost</h3>
+    <p class="dc-reason" id="dc-reason">Your peer left the session.</p>
+    <p class="dc-hint" id="dc-hint">The room is still open. Tap Reconnect to rejoin instantly.</p>
+    <div class="dc-timer-wrap">
+      <svg class="dc-timer-svg" viewBox="0 0 44 44">
+        <circle class="dc-timer-bg" cx="22" cy="22" r="18"/>
+        <circle class="dc-timer-arc" id="dc-timer-arc" cx="22" cy="22" r="18"/>
+      </svg>
+      <span class="dc-timer-num" id="dc-timer-num">30</span>
+    </div>
+    <div class="dc-actions">
+      <button class="pm-btn pm-accept dc-reconnect-btn" id="dc-reconnect-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Reconnect
+      </button>
+      <button class="pm-btn pm-reject" id="dc-home-btn">← Go Home</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Footer ────────────────────────────────────────────────── -->
+<footer class="site-footer">
+  <span class="footer-brand">⚡ PeerDrop</span>
+  <span class="footer-sep">·</span>
+  <span>Direct Browser-to-Browser</span>
+  <span class="footer-sep">·</span>
+  <span>Zero Cloud · Zero Internet</span>
+</footer>
+
+<div id="toast-container"></div>
+
+<!-- Local Scripts (100% Offline) -->
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/qrcode.min.js"></script>
+<script src="/js/html5-qrcode.min.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

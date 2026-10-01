@@ -1,0 +1,7 @@
+﻿services:
+  - type: web
+    name: peerdrop
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
