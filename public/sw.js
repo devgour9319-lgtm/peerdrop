@@ -1,4 +1,4 @@
-const CACHE = 'peerdrop-v9';
+const CACHE = 'peerdrop-v10';
 const ASSETS = [
   '/',
   '/index.html',
@@ -27,7 +27,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   // Don't cache socket.io or API requests
-  if (e.request.url.includes('/socket.io/') || e.request.url.includes('/local-info')) {
+  if (e.request.url.includes('/socket.io/') || e.request.url.includes('/local-info') || e.request.url.includes('/api/')) {
     return;
   }
   e.respondWith(

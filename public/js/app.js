@@ -32,6 +32,10 @@ class PeerDrop {
     this.token   = null;
     this.isHost  = false;
     this.role    = 'idle';
+    this.displayName = localStorage.getItem('peerdrop-name') || '';
+    this.members = [];
+    this.canTransfer = false;
+    this._joinRequests = [];
 
     // Send
     this.queue        = [];
@@ -79,6 +83,7 @@ class PeerDrop {
 
     this._bindSocket();
     this._bindUI();
+    $('display-name').value = this.displayName;
     this._checkURL();
     this._initWifi();
 
@@ -112,25 +117,58 @@ class PeerDrop {
       this.roomId    = roomId;
       this.token     = token;
       this.isHost    = true;
+      this.canTransfer = false;
+      this.members = [{ id: s.id, name: this.displayName || 'Host' }];
       this._hostIP   = localIP;
       this._hostPort = port || 3000;
       this._showScreen('waiting');
       this._renderWaiting(roomId, token, localIP, port || 3000);
+      this._renderMembers();
     });
 
-    s.on('room-joined', ({ roomId, hostId }) => {
+    s.on('room-joined', ({ roomId, hostId, members = [], canTransfer = true }) => {
       this.log(`Joined room ${roomId}, host=${hostId}`);
       this.roomId = roomId;
       this.peerId = hostId;
       this.isHost = false;
-      this._showScreen('waiting');
-      this._renderJoining(roomId);
+      this.canTransfer = canTransfer;
+      this.members = members;
+      this._renderMembers();
+      if (canTransfer) {
+        this._showScreen('waiting');
+        this._renderJoining(roomId);
+      } else {
+        this._showScreen('transfer');
+        this._setChatOnlyMode();
+      }
     });
 
     s.on('peer-joined', ({ peerId }) => {
       this.log(`Peer ${peerId} joined — starting WebRTC (initiator)`);
       this.peerId = peerId;
+      this.canTransfer = true;
       this._startRTC(true);
+    });
+
+    s.on('room-members', (members) => {
+      this.members = Array.isArray(members) ? members : [];
+      this._renderMembers();
+    });
+
+    s.on('join-request', ({ peerId, name }) => {
+      this._joinRequests.push({ peerId, name });
+      this._showNextJoinRequest();
+    });
+
+    s.on('join-request-pending', ({ hostName }) => {
+      this.toast(`Join request sent to ${hostName}. Waiting for approval…`, 'info');
+    });
+
+    s.on('chat-message', (message) => this._appendChatMessage(message));
+
+    s.on('room-closed', () => {
+      this.toast('The room host closed this room.', 'error');
+      this.reset();
     });
 
     s.on('offer', async ({ offer, from }) => {
@@ -291,6 +329,9 @@ class PeerDrop {
     if (this._connected) return;
     this._connected = true;
     this._showScreen('transfer');
+    this.canTransfer = true;
+    this._setChatOnlyMode();
+    $('dropzone').classList.remove('hidden');
     const b = $('mode-badge');
     if (b) { b.textContent = '📶 Direct WiFi (Full Speed)'; b.className = 'mode-badge wlan'; }
     this.toast('✅ Connected — Direct WiFi. Send as many files as you want!', 'success');
@@ -431,6 +472,8 @@ class PeerDrop {
     this._sendUid  = file._uid;
     this._sendAbort = false;
     this.log(`Sending: "${file.name}" (${fmt(file.size)})`);
+    file._description = await this._describeFile(file);
+    this._setDescription(file._uid, file._description || 'AI description unavailable.');
     this._updateStatus(file._uid, 'Waiting for approval…', '⏳');
 
     const ok = await this._askPermission(file);
@@ -660,7 +703,7 @@ class PeerDrop {
   _askPermission(file) {
     return new Promise(resolve => {
       this._permResolve = resolve;
-      this._sig(JSON.stringify({ t: 'file-request', name: file.name, size: file.size, mime: file.type || '' }));
+      this._sig(JSON.stringify({ t: 'file-request', name: file.name, size: file.size, mime: file.type || '', description: file._description || '' }));
       this._permTimer = setTimeout(() => {
         if (this._permResolve) { this._permResolve(false); this._permResolve = null; this.toast('Permission timed out', 'error'); }
       }, PERM_T);
@@ -671,9 +714,35 @@ class PeerDrop {
     $('pm-icon').textContent = fileIcon(meta.name);
     $('pm-name').textContent = meta.name;
     $('pm-size').textContent = fmt(meta.size);
+    $('pm-description').textContent = meta.description || 'AI description unavailable.';
     $('permission-overlay').classList.remove('hidden');
   }
   _hidePermModal() { $('permission-overlay').classList.add('hidden'); }
+
+  async _describeFile(file) {
+    const mime = (file.type || '').split(';')[0].toLowerCase();
+    const isImage = /^image\/(jpeg|png|webp)$/.test(mime);
+    const isText = mime.startsWith('text/') || [
+      'application/json', 'application/xml', 'application/javascript',
+      'application/x-javascript', 'application/csv'
+    ].includes(mime);
+    if ((!isImage && !isText) || file.size > 5 * 1024 * 1024) return '';
+
+    this._setDescription(file._uid, 'Generating local AI description…');
+    try {
+      const response = await fetch('/api/describe', {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Description unavailable');
+      return result.description || '';
+    } catch (error) {
+      this.log(`AI description unavailable for "${file.name}": ${error.message}`);
+      return '';
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // QR CAMERA
@@ -795,6 +864,7 @@ class PeerDrop {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     const t = $(`screen-${id}`);
     if (t) t.classList.add('active');
+    $('room-chat').classList.toggle('hidden', id === 'home' || !this.roomId);
   }
 
   toast(msg, type = 'info') {
@@ -815,6 +885,7 @@ class PeerDrop {
       <div class="tf-info">
         <div class="tf-name">${esc(file.name)}</div>
         <div class="tf-meta">${fmt(file.size)} &middot; <span class="tf-status">Queued</span></div>
+        <div class="tf-description">AI description pending</div>
         <div class="tf-bar"><div class="tf-fill" style="width:0%"></div></div>
       </div>
       <div class="tf-right">
@@ -824,6 +895,11 @@ class PeerDrop {
       </div>`;
     el.querySelector('.tf-cancel').onclick = () => this._cancelSend(file._uid, el);
     $('transfer-list').prepend(el);
+  }
+
+  _setDescription(id, description) {
+    const el = document.getElementById(id);
+    if (el) el.querySelector('.tf-description').textContent = description;
   }
 
   _updateStatus(id, s, ic) {
@@ -948,6 +1024,116 @@ class PeerDrop {
     fetch('/local-info').then(r => r.json()).then(info => {
       if (info.ip) $('wifi-label').textContent = `📶 WiFi: ${info.ip}`;
     }).catch(() => {});
+    this._refreshRooms();
+    this._discoveryTimer = setInterval(() => {
+      if (!this.roomId) this._refreshRooms();
+    }, 5000);
+  }
+
+  async _refreshRooms() {
+    const list = $('discovery-list');
+    try {
+      const response = await fetch('/api/rooms', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Room discovery returned ${response.status}`);
+      const { rooms = [] } = await response.json();
+      list.replaceChildren();
+      if (!rooms.length) {
+        const empty = document.createElement('p');
+        empty.className = 'discovery-empty';
+        empty.textContent = 'No open rooms found on this PeerDrop server.';
+        list.appendChild(empty);
+        return;
+      }
+      for (const room of rooms) {
+        const row = document.createElement('div');
+        row.className = 'discovery-room';
+        const info = document.createElement('div');
+        const owner = document.createElement('strong');
+        owner.textContent = room.hostName;
+        const details = document.createElement('span');
+        details.textContent = `${room.memberCount} / ${room.maxMembers} members · Code ${room.roomId}`;
+        info.append(owner, details);
+        const join = document.createElement('button');
+        join.type = 'button';
+        join.className = 'discovery-join';
+        join.textContent = 'Request to join';
+        join.onclick = () => this._joinRoom(room.roomId, null);
+        row.append(info, join);
+        list.appendChild(row);
+      }
+    } catch (error) {
+      this.log(`Room discovery failed: ${error.message}`);
+      list.replaceChildren();
+      const empty = document.createElement('p');
+      empty.className = 'discovery-empty';
+      empty.textContent = 'Room discovery is unavailable. You can still pair by QR or code.';
+      list.appendChild(empty);
+    }
+  }
+
+  _renderMembers() {
+    const members = $('chat-members');
+    const recipient = $('chat-recipient');
+    if (!members || !recipient) return;
+    members.replaceChildren();
+    recipient.replaceChildren();
+    const everyone = document.createElement('option');
+    everyone.value = '';
+    everyone.textContent = 'Everyone';
+    recipient.appendChild(everyone);
+    for (const member of this.members) {
+      const chip = document.createElement('span');
+      chip.className = 'chat-member';
+      chip.textContent = member.id === this.socket.id ? `${member.name} (you)` : member.name;
+      members.appendChild(chip);
+      if (member.id !== this.socket.id) {
+        const option = document.createElement('option');
+        option.value = member.id;
+        option.textContent = `Private: ${member.name}`;
+        recipient.appendChild(option);
+      }
+    }
+    const label = $('chat-members-label');
+    if (label) label.textContent = `${this.members.length} member${this.members.length === 1 ? '' : 's'} · messages are relayed by this PeerDrop server`;
+  }
+
+  _appendChatMessage(message) {
+    const feed = $('chat-feed');
+    if (!feed || !message || typeof message.text !== 'string') return;
+    const empty = feed.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    const item = document.createElement('article');
+    const isOwn = message.from === this.socket.id;
+    const recipient = this.members.find(member => member.id === message.to);
+    item.className = `chat-message${isOwn ? ' own' : ''}${message.to ? ' private' : ''}`;
+    const meta = document.createElement('div');
+    meta.className = 'chat-message-meta';
+    meta.textContent = `${isOwn ? 'You' : message.name}${message.to ? ` · ${isOwn ? `to ${recipient?.name || 'peer'}` : 'private message'}` : ''}`;
+    const text = document.createElement('div');
+    text.className = 'chat-message-text';
+    text.textContent = message.text;
+    item.append(meta, text);
+    feed.appendChild(item);
+    while (feed.querySelectorAll('.chat-message').length > 200) feed.firstElementChild.remove();
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  _showNextJoinRequest() {
+    const request = this._joinRequests[0];
+    if (!request) {
+      $('join-request-overlay').classList.add('hidden');
+      return;
+    }
+    $('join-request-name').textContent = request.name;
+    $('join-request-overlay').classList.remove('hidden');
+  }
+
+  _setChatOnlyMode() {
+    const chatOnly = !this.canTransfer;
+    $('chat-notice').classList.toggle('hidden', !chatOnly);
+    $('dropzone').classList.toggle('hidden', chatOnly);
+    $('transfer-list').classList.toggle('hidden', chatOnly);
+    $('done-bar').classList.toggle('hidden', chatOnly);
   }
 
   _checkURL() {
@@ -963,7 +1149,19 @@ class PeerDrop {
   }
 
   _joinRoom(code, token) {
-    this.socket.emit('join-room', { roomId: code, token: token || this.token || null });
+    this.socket.emit('join-room', {
+      roomId: code,
+      token: token || this.token || null,
+      displayName: this._getDisplayName(),
+    });
+  }
+
+  _getDisplayName() {
+    const input = $('display-name');
+    const name = input ? input.value.trim().replace(/\s+/g, ' ').slice(0, 32) : '';
+    this.displayName = name || 'Peer';
+    localStorage.setItem('peerdrop-name', this.displayName);
+    return this.displayName;
   }
 
   _resetPickBtn() {
@@ -985,6 +1183,8 @@ class PeerDrop {
     this._hidePermModal();
     this._hideConnectionInfo();
     this._stopScanner();
+    this._joinRequests = [];
+    $('join-request-overlay').classList.add('hidden');
 
     // Tell server we're leaving explicitly (triggers peer-disconnected on peer)
     this.socket.emit('leave-room');
@@ -997,6 +1197,9 @@ class PeerDrop {
     this.roomId        = null;
     this.token         = null;
     this.role          = 'idle';
+    this.members       = [];
+    this.canTransfer   = false;
+    this._joinRequests = [];
     this.queue         = [];
     this.preSelected   = [];
     this.sending       = false;
@@ -1014,6 +1217,13 @@ class PeerDrop {
     this._hostPort     = null;
 
     $('transfer-list').innerHTML = '';
+    $('chat-feed').replaceChildren();
+    $('chat-feed').innerHTML = '<p class="chat-empty">Messages in this session will appear here.</p>';
+    $('chat-members').replaceChildren();
+    $('chat-recipient').innerHTML = '<option value="">Everyone</option>';
+    $('dropzone').classList.remove('hidden');
+    $('transfer-list').classList.remove('hidden');
+    $('chat-notice').classList.add('hidden');
     $('join-input').value        = '';
     const bar = $('done-bar'); if (bar) bar.classList.add('hidden');
     const sp  = $('send-panel'); if (sp)  sp.classList.add('hidden');
@@ -1027,7 +1237,12 @@ class PeerDrop {
   // UI BINDINGS
   // ═══════════════════════════════════════════════════════════════
   _bindUI() {
-    $('recv-create-btn').onclick = () => { this.role = 'receiver'; this.socket.emit('create-room'); };
+    $('recv-create-btn').onclick = () => {
+      this.role = 'receiver';
+      this.socket.emit('create-room', { displayName: this._getDisplayName() });
+    };
+    $('refresh-rooms-btn').onclick = () => this._refreshRooms();
+    $('display-name').onchange = () => this._getDisplayName();
 
     const sb = $('send-open-btn'), sp = $('send-panel');
     if (sb && sp) sb.onclick = () => { this.role = 'sender'; sp.classList.toggle('hidden'); };
@@ -1050,7 +1265,10 @@ class PeerDrop {
     $('open-camera-btn').onclick   = () => { this.role = 'sender'; this._startScanner(); };
     $('close-camera-btn').onclick  = () => this._stopScanner();
     $('switch-camera-btn').onclick = () => this._switchCam();
-    $('sender-make-qr-link').onclick = () => { this.role = 'sender'; this.socket.emit('create-room'); };
+    $('sender-make-qr-link').onclick = () => {
+      this.role = 'sender';
+      this.socket.emit('create-room', { displayName: this._getDisplayName() });
+    };
 
     const ji = $('join-input');
     $('join-btn').onclick = () => {
@@ -1090,6 +1308,26 @@ class PeerDrop {
     // Disconnect popup buttons
     $('dc-reconnect-btn').onclick = () => this._dcPopupReconnect();
     $('dc-home-btn').onclick      = () => { this._hideDCPopup(); this.reset(); };
+
+    $('join-request-accept').onclick = () => {
+      const request = this._joinRequests.shift();
+      if (request) this.socket.emit('approve-join', { peerId: request.peerId });
+      this._showNextJoinRequest();
+    };
+    $('join-request-decline').onclick = () => {
+      const request = this._joinRequests.shift();
+      if (request) this.socket.emit('decline-join', { peerId: request.peerId });
+      this._showNextJoinRequest();
+    };
+
+    $('chat-form').onsubmit = (event) => {
+      event.preventDefault();
+      const input = $('chat-input');
+      const text = input.value.trim();
+      if (!text || !this.roomId) return;
+      this.socket.emit('chat-message', { text, to: $('chat-recipient').value || null });
+      input.value = '';
+    };
 
     // Permission modal
     $('pm-accept').onclick = () => {
