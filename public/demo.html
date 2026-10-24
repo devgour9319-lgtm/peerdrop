@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PeerDrop — Interactive Demo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='7' fill='%23242329'/%3E%3Crect x='5' y='5' width='8' height='8' rx='2' transform='rotate(45 9 9)' fill='%238f83f4'/%3E%3Crect x='15' y='5' width='8' height='8' rx='2' transform='rotate(45 19 9)' fill='%23de866c'/%3E%3Crect x='10' y='15' width='8' height='8' rx='2' transform='rotate(45 14 19)' fill='%2373b092'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ---- Demo banner ---- */
+    .demo-banner {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 999;
+      background: linear-gradient(90deg, #6559ce 0%, #8f83f4 100%);
+      color: #fff;
+      font-family: "DM Sans", sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 7px 20px;
+      letter-spacing: .2px;
+    }
+    .demo-banner .demo-dot { width: 7px; height: 7px; border-radius: 50%; background: #b8f5d8; animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.45;} }
+    .demo-banner .demo-steps { display: flex; gap: 16px; margin-left: 18px; }
+    .demo-banner .step { opacity: .65; cursor: pointer; padding: 3px 10px; border-radius: 20px; border: 1px solid rgba(255,255,255,.3); transition: .15s; }
+    .demo-banner .step.active { opacity: 1; background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.6); }
+    .demo-banner .step:hover { opacity: 1; }
+
+    body { padding-top: 38px; }
+
+    /* ---- Reset ---- */
+    *, ::before, ::after { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid; }
+    html { line-height: 1.5; -webkit-text-size-adjust: 100%; }
+    h1, h2 { font-size: inherit; font-weight: inherit; }
+    svg { display: block; vertical-align: middle; }
+    button, input { font: inherit; letter-spacing: inherit; color: inherit; background-color: transparent; border-radius: 0; }
+    [hidden] { display: none !important; }
+
+    /* ---- Core styles ---- */
+    :root {
+      font-family: "DM Sans", sans-serif;
+      color: #242429;
+      background: #f2f1ee;
+      font-synthesis: none;
+    }
+
+    button:focus-visible, input:focus-visible { outline: 2px solid #6658d9; outline-offset: 2px; }
+    body { margin: 0; min-width: 320px; min-height: 100vh; }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 244px minmax(420px, 1fr) 306px;
+      grid-template-rows: minmax(0, 1fr);
+      height: calc(100vh - 38px);
+      overflow: hidden;
+      background: #f8f7f4;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      color: #dedde6;
+      background: #242329;
+      border-right: 1px solid #17161a;
+    }
+
+    .brand-row {
+      height: 78px;
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border-bottom: 1px solid #37363d;
+    }
+    .brand-row strong { color: #fff; font-size: 18px; letter-spacing: -.3px; }
+    .brand-mark { width: 28px; height: 28px; position: relative; }
+    .brand-mark span { position: absolute; width: 11px; height: 11px; border-radius: 3px; transform: rotate(45deg); }
+    .brand-mark span:nth-child(1) { background: #8f83f4; left: 2px; top: 2px; }
+    .brand-mark span:nth-child(2) { background: #de866c; right: 1px; top: 2px; }
+    .brand-mark span:nth-child(3) { background: #73b092; left: 9px; bottom: 1px; }
+
+    .primary-nav { padding: 18px 12px 14px; display: grid; gap: 4px; }
+    .nav-item, .room-item {
+      border: 0;
+      background: transparent;
+      color: #aaa8b4;
+      width: 100%;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border-radius: 8px;
+      padding: 0 11px;
+      cursor: pointer;
+      text-align: left;
+      transition: background .18s, color .18s;
+    }
+    .nav-item:hover, .room-item:hover { color: #fff; background: #302f36; }
+    .nav-item.active { color: #fff; background: #3b3944; }
+    .nav-item span, .room-item span { flex: 1; font-size: 14px; font-weight: 500; }
+    .nav-item b { min-width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; background: #7669e8; color: white; font-size: 11px; }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 20px 8px 23px; color: #777580; }
+    .section-heading span { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700; }
+    .section-heading button { border: 0; background: transparent; color: #85838e; cursor: pointer; padding: 4px; }
+    .room-list { padding: 0 12px; }
+    .room-item { position: relative; height: 36px; padding-left: 12px; }
+    .room-item.active { color: #f2f1f7; }
+    .room-item.active::before { content: ""; position: absolute; left: 0; height: 20px; width: 3px; border-radius: 0 2px 2px 0; background: #8f83f4; }
+    .room-item small { color: #76747e; font-size: 11px; }
+
+    .sidebar-bottom { margin-top: auto; padding: 12px; }
+    .network-card { display: flex; gap: 10px; align-items: center; border: 1px solid #3a3940; background: #2b2a30; padding: 11px; border-radius: 9px; }
+    .network-icon { width: 29px; height: 29px; border-radius: 7px; display: grid; place-items: center; background: #38363f; color: #958af3; }
+    .network-card div:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+    .network-card strong { color: #e8e7eb; font-size: 12px; font-weight: 600; }
+    .network-card span { font-size: 10px; color: #898791; margin-top: 2px; }
+    .live-dot, .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #69b78f; }
+    .profile-row { margin-top: 12px; width: 100%; padding: 8px 5px; border: 0; background: transparent; display: flex; align-items: center; gap: 9px; color: #74727c; cursor: pointer; text-align: left; }
+    .profile-row > div:nth-child(2) { flex: 1; display: flex; flex-direction: column; }
+    .profile-row strong { color: #e8e7eb; font-size: 12px; }
+    .profile-row span { font-size: 10px; margin-top: 2px; }
+
+    .avatar { flex: none; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--avatar) 25%, #f5f4f1); color: color-mix(in srgb, var(--avatar) 75%, #312f32); font-weight: 700; position: relative; letter-spacing: -.2px; }
+    .sidebar .avatar { background: color-mix(in srgb, var(--avatar) 35%, #28272d); color: color-mix(in srgb, var(--avatar) 80%, white); }
+    .avatar-sm { width: 32px; height: 32px; font-size: 10px; border-radius: 8px; }
+    .avatar-md { width: 38px; height: 38px; font-size: 11px; }
+    .avatar-lg { width: 44px; height: 44px; font-size: 12px; }
+    .presence { position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px; border-radius: 50%; background: #59af82; border: 2px solid #fff; }
+    .sidebar .presence { border-color: #242329; }
+    .presence.offline { background: #a9a8ad; }
+
+    .chat-panel { min-width: 0; display: flex; flex-direction: column; background: #fbfaf8; }
+    .chat-header { flex: none; height: 78px; display: flex; align-items: center; gap: 14px; padding: 0 24px; border-bottom: 1px solid #e4e2de; background: rgba(251,250,248,.96); }
+    .channel-title { display: flex; align-items: center; gap: 11px; min-width: 0; flex: 1; }
+    .channel-icon { width: 34px; height: 34px; display: grid; place-items: center; color: #6658d9; background: #eeecfb; border-radius: 9px; }
+    .channel-title h1 { margin: 0; font-size: 15px; line-height: 1.3; letter-spacing: -.2px; }
+    .channel-title p { margin: 2px 0 0; color: #8d8a91; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .header-actions { display: flex; align-items: center; gap: 7px; }
+    .icon-button { border: 0; background: transparent; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: #78757e; cursor: pointer; }
+    .icon-button:hover { background: #efeeeb; color: #343239; }
+    .header-search { width: 150px; border: 1px solid #d9d6d2; border-radius: 7px; padding: 7px 9px; background: #fff; font-size: 12px; }
+    .member-pill { border: 0; border-left: 1px solid #e2dfdc; background: transparent; padding-left: 14px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .member-pill b { font-size: 11px; color: #77747c; }
+    .mini-avatars { display: flex; padding-left: 8px; }
+    .mini-avatars span { width: 23px; height: 23px; margin-left: -8px; border: 2px solid #fbfaf8; border-radius: 7px; display: grid; place-items: center; font-size: 7px; font-weight: 700; color: #4f4c52; }
+    .mini-avatars span:nth-child(1) { background: #f4d5c9; }
+    .mini-avatars span:nth-child(2) { background: #d2e2f3; }
+    .mini-avatars span:nth-child(3) { background: #d5e8dd; }
+
+    .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 28px clamp(24px, 5vw, 70px) 20px; scrollbar-width: thin; scrollbar-color: #cfcdc8 transparent; }
+    .room-intro { display: flex; gap: 14px; align-items: center; padding-bottom: 24px; }
+    .intro-icon { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 12px; color: #6658d9; background: #efedfb; }
+    .room-intro h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: -.4px; }
+    .room-intro p { margin: 0; color: #908d94; font-size: 12px; }
+    .date-divider { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; color: #a4a1a7; font-size: 10px; text-transform: uppercase; letter-spacing: .9px; font-weight: 600; }
+    .date-divider::before, .date-divider::after { content: ""; height: 1px; flex: 1; background: #e5e3df; }
+
+    .message { display: flex; gap: 12px; margin-bottom: 21px; max-width: 680px; }
+    .message-body { min-width: 0; flex: 1; padding-top: 1px; }
+    .message-author { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+    .message-author strong { font-size: 12px; color: #353239; }
+    .message-author time { font-size: 9px; color: #aaa7ac; }
+    .message-body > p { display: inline-block; margin: 0; padding: 10px 13px; color: #555159; background: #f0efec; border-radius: 4px 12px 12px 12px; font-size: 13px; line-height: 1.55; }
+    .message.own { margin-left: auto; flex-direction: row-reverse; }
+    .message.own .message-author { justify-content: flex-end; }
+    .message.own .message-body > p { display: block; background: #6960cf; color: white; border-radius: 12px 4px 12px 12px; }
+
+    .file-card { width: min(390px, 100%); min-height: 80px; border: 1px solid #dfddd8; background: #fff; border-radius: 11px; display: flex; align-items: center; gap: 12px; padding: 10px; box-shadow: 0 3px 12px rgba(40,36,49,.035); }
+    .message.own .file-card { margin-left: auto; }
+    .file-preview { width: 57px; height: 57px; border-radius: 8px; display: grid; place-items: center; color: #ba654b; background: #f4ddd5; }
+    .file-preview.archive { color: #695cd0; background: #ebe8fb; }
+    .file-meta { min-width: 0; display: flex; flex: 1; flex-direction: column; }
+    .file-meta strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-meta span { color: #929097; font-size: 10px; margin-top: 3px; }
+    .file-meta small { display: flex; align-items: center; gap: 5px; color: #6ba486; font-size: 9px; margin-top: 6px; }
+    .download-button { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; border: 1px solid #dedbe9; color: #675bd0; background: #f5f3fe; cursor: pointer; transition: .2s; }
+    .download-button:hover { background: #e8e4fb; }
+    .download-button.downloaded { color: #4d9972; background: #edf7f1; border-color: #cee7d8; }
+    .uploading { color: #8d8992; font-size: 11px; margin: 0 0 16px 50px; display: flex; gap: 4px; align-items: center; }
+    .uploading span { width: 4px; height: 4px; border-radius: 50%; background: #7d72df; animation: bounce 1s infinite alternate; }
+    .uploading span:nth-child(2) { animation-delay: .2s; }
+    .uploading span:nth-child(3) { animation-delay: .4s; margin-right: 5px; }
+    @keyframes bounce { to { transform: translateY(-4px); opacity: .45; } }
+
+    /* ---- Typing indicator ---- */
+    .typing-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; opacity: 0; transition: opacity .3s; }
+    .typing-row.visible { opacity: 1; }
+    .typing-dots { display: flex; gap: 3px; padding: 9px 12px; background: #f0efec; border-radius: 4px 12px 12px 12px; }
+    .typing-dots span { width: 5px; height: 5px; border-radius: 50%; background: #a09da3; animation: bounce 1s infinite alternate; }
+    .typing-dots span:nth-child(2) { animation-delay: .2s; }
+    .typing-dots span:nth-child(3) { animation-delay: .4s; }
+
+    .composer-wrap { flex: none; padding: 0 clamp(20px, 4.5vw, 64px) 22px; background: #fbfaf8; }
+    .privacy-note { display: flex; align-items: center; justify-content: center; gap: 5px; color: #aaa7ac; font-size: 9px; margin-bottom: 8px; }
+    .composer { min-height: 52px; border: 1px solid #dcd9d4; background: white; border-radius: 13px; display: flex; align-items: center; gap: 3px; padding: 6px; box-shadow: 0 8px 24px rgba(39,34,54,.06); }
+    .composer input { min-width: 0; flex: 1; border: 0; padding: 8px; color: #39363d; background: transparent; font-size: 13px; }
+    .composer input:focus { outline: 0; }
+    .composer input::placeholder { color: #aaa7ac; }
+    .compose-action { width: 35px; height: 35px; display: grid; place-items: center; border: 0; border-radius: 8px; color: #8c8990; background: transparent; cursor: pointer; }
+    .compose-action:hover { color: #5e54c2; background: #f0eefb; }
+    .attach { border-right: 1px solid #e8e5e1; border-radius: 8px 0 0 8px; }
+    .send-button { width: 36px; height: 36px; border: 0; border-radius: 9px; display: grid; place-items: center; color: white; background: #6559ce; cursor: pointer; transition: opacity .2s, transform .2s; }
+    .send-button:hover { transform: translateY(-1px); }
+    .send-button:disabled { opacity: .35; cursor: default; transform: none; }
+
+    /* ---- Transfer progress bar ---- */
+    .transfer-progress-wrap { padding: 10px 16px; background: #fff; border: 1px solid #dfddd8; border-radius: 11px; margin-bottom: 16px; }
+    .transfer-progress-wrap .tp-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+    .transfer-progress-wrap strong { font-size: 12px; }
+    .transfer-progress-wrap .tp-speed { font-size: 10px; color: #908d94; }
+    .tp-bar-bg { height: 5px; border-radius: 3px; background: #efedec; overflow: hidden; }
+    .tp-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg,#6559ce,#8f83f4); transition: width .25s; }
+
+    .devices-panel { min-width: 0; overflow-y: auto; background: #f4f3f0; border-left: 1px solid #e0ded9; padding: 0 20px 20px; scrollbar-width: thin; }
+    .devices-header { height: 78px; margin: 0 -20px; padding: 0 20px; display: flex; align-items: center; border-bottom: 1px solid #e0ded9; }
+    .devices-header > div:first-child { flex: 1; }
+    .devices-header span { color: #9a979e; text-transform: uppercase; letter-spacing: 1px; font-size: 8px; font-weight: 700; }
+    .devices-header h2 { font-size: 15px; margin: 2px 0 0; }
+    .share-drop { width: 100%; min-height: 66px; margin: 20px 0 23px; display: flex; align-items: center; gap: 11px; padding: 10px; border: 1px dashed #c7c1e7; border-radius: 11px; background: #eeecf9; text-align: left; cursor: pointer; color: #665ac9; transition: background .2s; }
+    .share-drop:hover { background: #e5e1fa; }
+    .share-icon { width: 37px; height: 37px; border-radius: 9px; display: grid; place-items: center; color: white; background: #6e61d4; }
+    .share-drop > span:nth-child(2) { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+    .share-drop strong { color: #4e476e; font-size: 12px; }
+    .share-drop small { color: #9992b8; font-size: 9px; margin-top: 3px; }
+    .device-section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .device-section-heading > span { text-transform: uppercase; letter-spacing: .8px; color: #949198; font-size: 9px; font-weight: 700; }
+    .device-section-heading > small { color: #6caa89; font-size: 9px; }
+    .device-section-heading > button { border: 0; color: #6d62c7; background: transparent; font-size: 9px; font-weight: 600; cursor: pointer; }
+    .device-list { display: grid; gap: 2px; }
+    .device-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 4px; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; color: #aba8ae; transition: .15s; }
+    .device-row:hover { background: #ebe9e5; color: #6157bd; }
+    .device-row > span { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+    .device-row strong { color: #3e3a41; font-size: 11px; }
+    .device-row small { color: #9d9aa0; font-size: 9px; margin-top: 2px; }
+    .transfer-section { margin-top: 26px; }
+    .transfer-card { display: flex; align-items: center; gap: 9px; padding: 9px 0; border-bottom: 1px solid #e4e1dd; }
+    .transfer-type { width: 34px; height: 38px; display: grid; place-items: center; border-radius: 7px; background: #e8e4f9; color: #675bcc; }
+    .transfer-type.image { background: #f2ddd5; color: #b8664d; }
+    .transfer-card > div:nth-child(2) { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+    .transfer-card strong { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .transfer-card span { color: #a09da3; font-size: 8px; margin-top: 2px; }
+    .transfer-card small { color: #69a784; display: flex; align-items: center; gap: 2px; font-size: 8px; margin-top: 4px; }
+    .transfer-card > button { border: 0; background: transparent; color: #817d86; cursor: pointer; padding: 5px; }
+    .security-card { display: flex; align-items: flex-start; gap: 9px; margin-top: 26px; padding: 13px; border: 1px solid #dedbd6; border-radius: 10px; color: #6c62c2; background: #f8f7f4; }
+    .security-card div { min-width: 0; }
+    .security-card strong { display: block; color: #5e5962; font-size: 10px; }
+    .security-card p { color: #98959b; font-size: 9px; line-height: 1.45; margin: 4px 0 0; }
+
+    /* ---- Toast ---- */
+    .toast-area { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 800; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+    .toast { padding: 10px 18px; border-radius: 10px; font-size: 12px; font-weight: 600; color: #fff; background: #3e3a42; box-shadow: 0 6px 24px rgba(20,18,26,.22); animation: toastIn .25s ease; pointer-events: auto; }
+    .toast.success { background: #2f7a56; }
+    .toast.error { background: #913039; }
+    .toast.info { background: #4a47a3; }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    /* ---- Demo highlight pulse ---- */
+    .demo-highlight { animation: highlightPulse 1.2s 2; }
+    @keyframes highlightPulse { 0%,100%{box-shadow:none;} 50%{box-shadow:0 0 0 3px rgba(101,89,206,.5);} }
+
+    .mobile-only, .mobile-close, .scrim { display: none; }
+
+    @media (max-width: 1050px) {
+      .app-shell { grid-template-columns: 220px minmax(400px, 1fr) 270px; }
+      .messages { padding-inline: 28px; }
+      .composer-wrap { padding-inline: 25px; }
+      .devices-panel { padding-inline: 15px; }
+      .devices-header { margin-inline: -15px; padding-inline: 15px; }
+    }
+
+    @media (max-width: 840px) {
+      .app-shell { display: block; }
+      .chat-panel { height: calc(100vh - 38px); }
+      .sidebar, .devices-panel {
+        position: fixed;
+        z-index: 30;
+        top: 38px;
+        bottom: 0;
+        width: min(310px, 86vw);
+        transition: transform .25s ease;
+        box-shadow: 12px 0 40px rgba(18,17,23,.18);
+      }
+      .sidebar { left: 0; transform: translateX(-105%); }
+      .devices-panel { right: 0; transform: translateX(105%); box-shadow: -12px 0 40px rgba(18,17,23,.14); }
+      .sidebar.mobile-open, .devices-panel.mobile-open { transform: translateX(0); }
+      .mobile-only, .mobile-close { display: grid; }
+      .brand-row .mobile-close { margin-left: auto; color: #aaa8b4; }
+      .devices-header .mobile-close { order: 3; }
+      .desktop-settings { display: none; }
+      .scrim { display: block; position: fixed; z-index: 20; inset: 0; border: 0; background: rgba(27,25,31,.35); }
+    }
+
+    @media (max-width: 560px) {
+      .demo-banner .demo-steps { display: none; }
+      .chat-header { height: 68px; padding: 0 12px; gap: 7px; }
+      .channel-title p, .member-pill, .header-actions .icon-button:first-of-type, .header-search { display: none; }
+      .channel-title h1 { font-size: 14px; }
+      .channel-icon { width: 30px; height: 30px; }
+      .messages { padding: 20px 14px 15px; }
+      .room-intro { align-items: flex-start; }
+      .room-intro p { line-height: 1.45; }
+      .message { gap: 8px; }
+      .avatar-md { width: 32px; height: 32px; border-radius: 8px; font-size: 9px; }
+      .message-body > p { font-size: 12px; }
+      .composer-wrap { padding: 0 10px 10px; }
+      .privacy-note { display: none; }
+      .composer { min-height: 48px; }
+      .compose-action { width: 32px; }
+      .composer input { font-size: 12px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Demo banner -->
+  <div class="demo-banner">
+    <span class="demo-dot"></span>
+    <span>PeerDrop Interactive Demo</span>
+    <div class="demo-steps">
+      <span class="step active" data-step="1">① Chat</span>
+      <span class="step" data-step="2">② Send file</span>
+      <span class="step" data-step="3">③ Download</span>
+      <span class="step" data-step="4">④ Switch room</span>
+    </div>
+  </div>
+
+  <div class="app-shell">
+
+    <!-- ===== Left sidebar ===== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark"><span></span><span></span><span></span></div>
+        <strong>PeerDrop</strong>
+        <button class="icon-button mobile-close" data-close-panel aria-label="Close menu"><i data-icon="x"></i></button>
+      </div>
+
+      <nav class="primary-nav">
+        <button class="nav-item active"><i data-icon="chat"></i><span>Chat</span><b>3</b></button>
+        <button class="nav-item"><i data-icon="inbox"></i><span>My inbox</span></button>
+        <button class="nav-item"><i data-icon="folder"></i><span>Shared files</span></button>
+      </nav>
+
+      <div class="section-heading"><span>Rooms</span><button aria-label="Create room"><i data-icon="plus" data-size="16"></i></button></div>
+      <div class="room-list" id="roomList"></div>
+
+      <div class="sidebar-bottom">
+        <div class="network-card">
+          <div class="network-icon"><i data-icon="wifi" data-size="17"></i></div>
+          <div><strong>Local network</strong><span>4 devices connected</span></div>
+          <span class="live-dot"></span>
+        </div>
+        <button class="profile-row">
+          <div class="avatar avatar-sm" style="--avatar:#9b8be0">AK<span class="presence"></span></div>
+          <div><strong>Alex Kim</strong><span>Available</span></div>
+          <i data-icon="more"></i>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ===== Chat ===== -->
+    <main class="chat-panel">
+      <header class="chat-header">
+        <button class="icon-button mobile-only" id="openNav" aria-label="Open menu"><i data-icon="menu"></i></button>
+        <div class="channel-title">
+          <span class="channel-icon"><i data-icon="hash" data-size="17"></i></span>
+          <div><h1 id="roomTitle"></h1><p id="roomSubtitle"></p></div>
+        </div>
+        <div class="header-actions">
+          <input class="header-search" id="searchInput" placeholder="Search chat…" hidden />
+          <button class="icon-button" id="searchToggle" aria-label="Search"><i data-icon="search"></i></button>
+          <button class="member-pill"><div class="mini-avatars"><span>MC</span><span>JB</span><span>LP</span></div><b>4</b></button>
+          <button class="icon-button devices-toggle" id="openDevices" aria-label="Show devices"><i data-icon="info"></i></button>
+        </div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite"></section>
+
+      <div class="composer-wrap">
+        <div class="privacy-note"><i data-icon="shield" data-size="13"></i> End-to-end encrypted on your local network</div>
+        <form class="composer" id="composer" autocomplete="off">
+          <input type="file" id="fileInput" hidden />
+          <button type="button" class="compose-action attach" id="attachBtn" aria-label="Attach a file"><i data-icon="paperclip"></i></button>
+          <input id="draft" />
+          <button type="button" class="compose-action" aria-label="Add reaction"><i data-icon="smile"></i></button>
+          <button class="send-button" id="sendBtn" aria-label="Send message" disabled><i data-icon="send" data-size="17"></i></button>
+        </form>
+      </div>
+    </main>
+
+    <!-- ===== Devices panel ===== -->
+    <aside class="devices-panel" id="devicesPanel">
+      <div class="devices-header">
+        <div><span>Nearby</span><h2>Devices</h2></div>
+        <button class="icon-button mobile-close" data-close-panel aria-label="Close devices"><i data-icon="x"></i></button>
+        <button class="icon-button desktop-settings" aria-label="Settings"><i data-icon="settings"></i></button>
+      </div>
+
+      <button class="share-drop" id="shareDrop">
+        <span class="share-icon"><i data-icon="upload" data-size="20"></i></span>
+        <span><strong>Share a file</strong><small>Send to this room or a device</small></span>
+        <i data-icon="chevron" data-size="17"></i>
+      </button>
+
+      <div class="device-section-heading"><span>On your network</span><small>3 online</small></div>
+      <div class="device-list" id="deviceList"></div>
+
+      <div class="transfer-section">
+        <div class="device-section-heading"><span>Recent transfers</span><button>View all</button></div>
+        <div class="transfer-card">
+          <div class="transfer-type"><i data-icon="archive" data-size="19"></i></div>
+          <div><strong>Brand assets.zip</strong><span>124 MB · Received</span><small><i data-icon="check" data-size="11"></i> Complete</small></div>
+          <button aria-label="Download Brand assets.zip"><i data-icon="download" data-size="16"></i></button>
+        </div>
+        <div class="transfer-card">
+          <div class="transfer-type image"><i data-icon="image" data-size="19"></i></div>
+          <div><strong>IMG_2048.jpg</strong><span>8.6 MB · Sent</span><small><i data-icon="check" data-size="11"></i> Complete</small></div>
+          <button aria-label="More options"><i data-icon="more" data-size="16"></i></button>
+        </div>
+      </div>
+
+      <div class="security-card">
+        <i data-icon="shield" data-size="18"></i>
+        <div><strong>Private by design</strong><p>Files move directly between devices. Nothing leaves your network.</p></div>
+      </div>
+    </aside>
+
+    <button class="scrim" id="scrim" data-close-panel aria-label="Close panel" hidden></button>
+  </div>
+
+  <!-- Toast area -->
+  <div class="toast-area" id="toastArea"></div>
+
+  <script>
+    /* ---------- Icons ---------- */
+    const ICONS = {
+      archive: '<path d="M4 7h16" /><path d="M6 7v12h12V7" /><path d="M3 3h18v4H3z" /><path d="M10 11h4" />',
+      arrow: '<path d="m9 18 6-6-6-6" />',
+      bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" />',
+      chat: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />',
+      check: '<path d="m5 12 4 4L19 6" />',
+      chevron: '<path d="m9 18 6-6-6-6" />',
+      download: '<path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" />',
+      file: '<path d="M6 2h8l4 4v16H6z" /><path d="M14 2v5h5" />',
+      folder: '<path d="M3 5h6l2 2h10v12H3z" />',
+      hash: '<path d="M5 9h14M4 15h14M10 3 8 21M16 3l-2 18" />',
+      image: '<rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-4-4L5 20" />',
+      inbox: '<path d="M4 4h16v16H4z" /><path d="M4 14h5l2 3h2l2-3h5" />',
+      info: '<circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" />',
+      menu: '<path d="M4 7h16M4 12h16M4 17h16" />',
+      more: '<circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" />',
+      paperclip: '<path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2a4 4 0 0 1 5.5 5.5L9 17a2 2 0 0 1-3-3l8.5-8.5" />',
+      plus: '<path d="M12 5v14M5 12h14" />',
+      search: '<circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />',
+      send: '<path d="m22 2-7 20-4-9-9-4z" /><path d="M22 2 11 13" />',
+      settings: '<circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />',
+      shield: '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path d="m9 12 2 2 4-4" />',
+      smile: '<circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" />',
+      upload: '<path d="M12 21V9" /><path d="m7 14 5-5 5 5" /><path d="M5 3h14" />',
+      users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" />',
+      wifi: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0" /><circle cx="12" cy="20" r="1" fill="currentColor" />',
+      x: '<path d="m6 6 12 12M18 6 6 18" />'
+    };
+
+    function icon(name, size = 18) {
+      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
+    }
+
+    function hydrateIcons(root) {
+      root.querySelectorAll('[data-icon]').forEach(function (el) {
+        el.outerHTML = icon(el.dataset.icon, Number(el.dataset.size) || 18);
+      });
+    }
+
+    /* ---------- Helpers ---------- */
+    function esc(value) {
+      return String(value).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function nowTime() {
+      return new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+    }
+
+    function avatar(initials, color, size, online) {
+      return '<div class="avatar avatar-' + (size || 'md') + '" style="--avatar:' + esc(color) + '">' + esc(initials) +
+        (online !== undefined ? '<span class="presence ' + (online ? '' : 'offline') + '"></span>' : '') + '</div>';
+    }
+
+    /* ---------- Toast ---------- */
+    function toast(msg, type) {
+      const area = document.getElementById('toastArea');
+      const el = document.createElement('div');
+      el.className = 'toast ' + (type || '');
+      el.textContent = msg;
+      area.appendChild(el);
+      setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .4s'; setTimeout(function () { el.remove(); }, 400); }, 2800);
+    }
+
+    /* ---------- Data ---------- */
+    const messages = [
+      { id: 1, author: 'Maya Chen', initials: 'MC', time: '10:24', color: '#e49373', text: 'Hey everyone — I\u2019ve uploaded the final selects from yesterday. The colors came out beautifully.' },
+      { id: 2, author: 'Maya Chen', initials: 'MC', time: '10:25', color: '#e49373', file: { name: 'Campaign selects', size: '428 MB \u00b7 36 photos', kind: 'image', status: 'Ready to download' } },
+      { id: 3, author: 'Jon Bell', initials: 'JB', time: '10:27', color: '#77a6d8', text: 'These look great. Pulling them down now \u2014 LAN speed is a beautiful thing.' },
+      { id: 4, author: 'You', initials: 'AK', time: '10:29', color: '#9b8be0', own: true, text: 'Agreed. I\u2019ll package the web-ready versions and drop them here in a few.' },
+      { id: 5, author: 'Lina Park', initials: 'LP', time: '10:34', color: '#7cb89a', text: 'Perfect. Can you include the updated logo files too?' }
+    ];
+
+    const devices = [
+      { name: 'Maya\u2019s MacBook', detail: 'macOS \u00b7 This room', initials: 'MM', color: '#e49373', online: true },
+      { name: 'Jon\u2019s iPhone', detail: 'iOS \u00b7 Nearby', initials: 'JI', color: '#77a6d8', online: true },
+      { name: 'Studio iPad', detail: 'iPadOS \u00b7 Nearby', initials: 'SI', color: '#7cb89a', online: true },
+      { name: 'Office PC', detail: 'Windows \u00b7 2 min ago', initials: 'OP', color: '#a8a8b8', online: false }
+    ];
+
+    const rooms = [
+      { name: 'studio', count: 4 },
+      { name: 'general', count: 8 },
+      { name: 'weekend-plans', count: 3 }
+    ];
+
+    /* ---------- State ---------- */
+    let activeRoom = 'studio';
+    let mobilePanel = null;
+    let uploadingCount = 0;
+    let demoStep = 1;
+    let activeTransferProgress = null;
+
+    /* ---------- Elements ---------- */
+    const $ = function (id) { return document.getElementById(id); };
+    const sidebar = $('sidebar'), devicesPanel = $('devicesPanel'), scrim = $('scrim');
+    const messagesEl = $('messages'), roomListEl = $('roomList'), deviceListEl = $('deviceList');
+    const draftEl = $('draft'), sendBtn = $('sendBtn'), fileInput = $('fileInput');
+    const searchInput = $('searchInput');
+
+    /* ---------- Rendering ---------- */
+    function fileCardHTML(m) {
+      const f = m.file;
+      return '<div class="file-card">' +
+        '<div class="file-preview ' + f.kind + '">' + icon(f.kind === 'image' ? 'image' : 'archive', 23) + '</div>' +
+        '<div class="file-meta">' +
+          '<strong>' + esc(f.name) + '</strong>' +
+          '<span>' + esc(f.size) + '</span>' +
+          '<small><span class="status-dot"></span>' + (m.downloaded ? 'Saved to Downloads' : esc(f.status)) + '</small>' +
+        '</div>' +
+        '<button class="download-button ' + (m.downloaded ? 'downloaded' : '') + '" data-download="' + m.id + '" aria-label="Download ' + esc(f.name) + '">' +
+          icon(m.downloaded ? 'check' : 'download', 18) +
+        '</button>' +
+      '</div>';
+    }
+
+    function messageHTML(m) {
+      return '<article class="message ' + (m.own ? 'own' : '') + '">' +
+        avatar(m.initials, m.color) +
+        '<div class="message-body">' +
+          '<div class="message-author"><strong>' + esc(m.author) + '</strong><time>' + esc(m.time) + '</time></div>' +
+          (m.text ? '<p>' + esc(m.text) + '</p>' : '') +
+          (m.file ? fileCardHTML(m) : '') +
+        '</div>' +
+      '</article>';
+    }
+
+    function renderMessages(scrollToEnd) {
+      const keep = messagesEl.scrollTop;
+      const progressHTML = activeTransferProgress
+        ? '<div class="transfer-progress-wrap">' +
+            '<div class="tp-row"><strong>' + esc(activeTransferProgress.name) + '</strong><span class="tp-speed">' + activeTransferProgress.speed + '</span></div>' +
+            '<div class="tp-bar-bg"><div class="tp-bar" style="width:' + (activeTransferProgress.pct * 100).toFixed(0) + '%"></div></div>' +
+          '</div>'
+        : '';
+
+      messagesEl.innerHTML =
+        '<div class="room-intro">' +
+          '<div class="intro-icon">' + icon('hash', 22) + '</div>' +
+          '<div><h2>Welcome to #' + esc(activeRoom) + '</h2><p>This is the beginning of the room. Files shared here stay on your local network.</p></div>' +
+        '</div>' +
+        '<div class="date-divider"><span>Today</span></div>' +
+        messages.map(messageHTML).join('') +
+        '<div class="typing-row" id="typingRow">' +
+          avatar('LP', '#7cb89a') +
+          '<div class="typing-dots"><span></span><span></span><span></span></div>' +
+        '</div>' +
+        progressHTML +
+        (uploadingCount > 0 ? '<div class="uploading"><span></span><span></span><span></span> Preparing your file to share</div>' : '');
+      messagesEl.scrollTop = scrollToEnd ? messagesEl.scrollHeight : keep;
+    }
+
+    function renderRooms() {
+      roomListEl.innerHTML = rooms.map(function (room) {
+        return '<button class="room-item ' + (activeRoom === room.name ? 'active' : '') + '" data-room="' + esc(room.name) + '">' +
+          icon('hash', 16) + '<span>' + esc(room.name) + '</span><small>' + room.count + '</small></button>';
+      }).join('');
+    }
+
+    function renderRoomHeader() {
+      $('roomTitle').textContent = activeRoom;
+      $('roomSubtitle').textContent = activeRoom === 'studio'
+        ? 'Campaign files, feedback, and studio talk'
+        : 'Conversation in ' + activeRoom;
+      draftEl.placeholder = 'Message #' + activeRoom;
+      draftEl.setAttribute('aria-label', 'Message ' + activeRoom);
+    }
+
+    function renderDevices() {
+      deviceListEl.innerHTML = devices.map(function (d) {
+        return '<button class="device-row">' +
+          avatar(d.initials, d.color, 'md', d.online) +
+          '<span><strong>' + esc(d.name) + '</strong><small>' + esc(d.detail) + '</small></span>' +
+          icon('arrow', 15) +
+        '</button>';
+      }).join('');
+    }
+
+    function renderPanels() {
+      sidebar.classList.toggle('mobile-open', mobilePanel === 'nav');
+      devicesPanel.classList.toggle('mobile-open', mobilePanel === 'devices');
+      scrim.hidden = !mobilePanel;
+    }
+
+    /* ---------- Actions ---------- */
+    function sendMessage(event) {
+      event.preventDefault();
+      const text = draftEl.value.trim();
+      if (!text) return;
+      messages.push({ id: Date.now(), author: 'You', initials: 'AK', time: nowTime(), color: '#9b8be0', own: true, text: text });
+      draftEl.value = '';
+      sendBtn.disabled = true;
+      renderMessages(true);
+      setDemoStep(2);
+
+      // Simulate a reply after 2s
+      setTimeout(function () {
+        const typingEl = document.getElementById('typingRow');
+        if (typingEl) typingEl.classList.add('visible');
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        setTimeout(function () {
+          const replies = [
+            { author: 'Maya Chen', initials: 'MC', color: '#e49373', text: 'On it! Give me a sec.' },
+            { author: 'Jon Bell', initials: 'JB', color: '#77a6d8', text: 'Nice, dropping the updated files soon 🚀' },
+            { author: 'Lina Park', initials: 'LP', color: '#7cb89a', text: 'Thanks! Saving them now.' },
+          ];
+          const r = replies[Math.floor(Math.random() * replies.length)];
+          messages.push({ id: Date.now(), author: r.author, initials: r.initials, time: nowTime(), color: r.color, text: r.text });
+          renderMessages(true);
+        }, 1800);
+      }, 800);
+    }
+
+    function attachFile(file) {
+      if (!file) return;
+      setDemoStep(2);
+      uploadingCount++;
+      renderMessages(true);
+      toast('Sharing "' + file.name + '" over LAN…', 'info');
+
+      // Simulate progress
+      let progress = 0;
+      const name = file.name;
+      const totalMs = 1800;
+      const startTs = Date.now();
+
+      const tick = function () {
+        const elapsed = Date.now() - startTs;
+        progress = Math.min(1, elapsed / totalMs);
+        const kbps = Math.round((file.size * progress) / (elapsed / 1000) / 1024);
+        activeTransferProgress = { name: name, pct: progress, speed: kbps + ' KB/s' };
+        renderMessages(true);
+        if (progress < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          activeTransferProgress = null;
+          uploadingCount--;
+          messages.push({
+            id: Date.now(), author: 'You', initials: 'AK', time: nowTime(), color: '#9b8be0', own: true,
+            file: {
+              name: file.name,
+              size: Math.max(1, Math.round(file.size / 1024)) + ' KB \u00b7 Shared by you',
+              kind: file.type.indexOf('image') === 0 ? 'image' : 'archive',
+              status: 'Available to everyone'
+            }
+          });
+          renderMessages(true);
+          toast('"' + file.name + '" shared successfully!', 'success');
+          setDemoStep(3);
+        }
+      };
+      requestAnimationFrame(tick);
+    }
+
+    function setPanel(name) {
+      mobilePanel = name;
+      renderPanels();
+    }
+
+    /* ---------- Demo steps ---------- */
+    function setDemoStep(step) {
+      demoStep = step;
+      document.querySelectorAll('.demo-steps .step').forEach(function (el) {
+        el.classList.toggle('active', Number(el.dataset.step) === step);
+      });
+    }
+
+    document.querySelectorAll('.demo-steps .step').forEach(function (el) {
+      el.addEventListener('click', function () {
+        const step = Number(el.dataset.step);
+        if (step === 1) {
+          toast('Type a message and press Send!', 'info');
+          draftEl.focus();
+        } else if (step === 2) {
+          toast('Click the paperclip to share a file!', 'info');
+        } else if (step === 3) {
+          toast('Click the download button on a file card!', 'info');
+          const btn = messagesEl.querySelector('[data-download]');
+          if (btn) { btn.classList.add('demo-highlight'); setTimeout(function () { btn.classList.remove('demo-highlight'); }, 2500); }
+        } else if (step === 4) {
+          toast('Click a room in the left sidebar!', 'info');
+          const firstRoom = roomListEl.querySelector('.room-item:not(.active)');
+          if (firstRoom) { firstRoom.classList.add('demo-highlight'); setTimeout(function () { firstRoom.classList.remove('demo-highlight'); }, 2500); }
+        }
+        setDemoStep(step);
+      });
+    });
+
+    /* ---------- Events ---------- */
+    $('composer').addEventListener('submit', sendMessage);
+    draftEl.addEventListener('input', function () { sendBtn.disabled = !draftEl.value.trim(); });
+
+    $('attachBtn').addEventListener('click', function () { fileInput.click(); });
+    $('shareDrop').addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () {
+      attachFile(fileInput.files[0]);
+      fileInput.value = '';
+    });
+
+    messagesEl.addEventListener('click', function (event) {
+      const btn = event.target.closest('[data-download]');
+      if (!btn) return;
+      const msg = messages.find(function (m) { return String(m.id) === btn.dataset.download; });
+      if (msg) {
+        msg.downloaded = true;
+        renderMessages(false);
+        toast('"' + (msg.file ? msg.file.name : 'File') + '" saved to Downloads!', 'success');
+        setDemoStep(4);
+      }
+    });
+
+    roomListEl.addEventListener('click', function (event) {
+      const btn = event.target.closest('[data-room]');
+      if (!btn) return;
+      activeRoom = btn.dataset.room;
+      renderRooms();
+      renderRoomHeader();
+      renderMessages(false);
+      toast('Switched to #' + activeRoom, '');
+      setDemoStep(1);
+    });
+
+    $('searchToggle').addEventListener('click', function () {
+      searchInput.hidden = !searchInput.hidden;
+      if (searchInput.hidden) searchInput.value = ''; else searchInput.focus();
+    });
+
+    $('openNav').addEventListener('click', function () { setPanel('nav'); });
+    $('openDevices').addEventListener('click', function () { setPanel('devices'); });
+    document.querySelectorAll('[data-close-panel]').forEach(function (el) {
+      el.addEventListener('click', function () { setPanel(null); });
+    });
+
+    /* ---------- Init ---------- */
+    hydrateIcons(document.body);
+    renderRooms();
+    renderRoomHeader();
+    renderDevices();
+    renderMessages(true);
+    renderPanels();
+  </script>
+</body>
+</html>

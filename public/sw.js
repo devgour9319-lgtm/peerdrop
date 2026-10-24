@@ -1,12 +1,14 @@
-const CACHE = 'peerdrop-v10';
+const CACHE = 'peerdrop-v19';
 const ASSETS = [
   '/',
   '/index.html',
   '/css/style.css',
   '/js/app.js',
+  '/js/pc-connect.js',
+  '/js/local-chat.js',
   '/js/qrcode.min.js',
-  '/js/html5-qrcode.min.js',
-  '/manifest.json'
+  '/manifest.json',
+  '/socket.io/socket.io.js'
 ];
 
 self.addEventListener('install', e => {
@@ -26,8 +28,15 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Don't cache socket.io or API requests
-  if (e.request.url.includes('/socket.io/') || e.request.url.includes('/local-info') || e.request.url.includes('/api/')) {
+  if (e.request.method !== 'GET') return;
+
+  const url = new URL(e.request.url);
+  const isSocketClient = url.pathname === '/socket.io/socket.io.js';
+  // Keep live socket traffic and API responses online-only; the client library is static.
+  if (url.origin !== self.location.origin
+    || (url.pathname.startsWith('/socket.io/') && !isSocketClient)
+    || url.pathname === '/local-info'
+    || url.pathname.startsWith('/api/')) {
     return;
   }
   e.respondWith(
@@ -37,6 +46,8 @@ self.addEventListener('fetch', e => {
         caches.open(CACHE).then(c => c.put(e.request, clone));
       }
       return resp;
-    })).catch(() => caches.match('/index.html'))
+    })).catch(() => e.request.mode === 'navigate'
+      ? caches.match('/index.html')
+      : new Response('', { status: 503, statusText: 'Offline' }))
   );
 });

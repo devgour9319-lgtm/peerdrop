@@ -1,11 +1,11 @@
 {
   "name": "PeerDrop",
   "short_name": "PeerDrop",
-  "description": "Direct WiFi file transfer — Browser to Browser, Zero Cloud",
+  "description": "Direct Wi-Fi file sharing and a local PIN-protected inbox",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#07070f",
-  "theme_color": "#7c3aed",
+  "background_color": "#f4f7fb",
+  "theme_color": "#ffffff",
   "icons": [
     {
       "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",

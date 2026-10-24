@@ -6,7 +6,7 @@
 'use strict';
 
 // ── Tuning ──────────────────────────────────────────────────────
-const CHUNK   = 128 * 1024;        // 128 KB per chunk
+const CHUNK   = 64 * 1024;         // 64 KB works with conservative SCTP message limits
 const BUF_HI  = 8 * 1024 * 1024;  // 8 MB — pause sending
 const BUF_LO  = 2 * 1024 * 1024;  // 2 MB — resume sending
 const UI_MS   = 250;               // DOM throttle
@@ -21,6 +21,24 @@ const isLocal = /^(localhost|127\.|10\.|192\.168\.|172\.)/.test(location.hostnam
 const ICE = isLocal
   ? { iceServers: [] }
   : { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+let qrScannerLoadPromise;
+function loadQrScanner() {
+  if (typeof Html5Qrcode !== 'undefined') return Promise.resolve();
+  if (!qrScannerLoadPromise) {
+    qrScannerLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/js/html5-qrcode.min.js';
+      script.onload = () => resolve();
+      script.onerror = () => {
+        qrScannerLoadPromise = null;
+        reject(new Error('The local QR scanner could not be loaded.'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return qrScannerLoadPromise;
+}
 
 class PeerDrop {
   constructor() {
@@ -42,6 +60,7 @@ class PeerDrop {
     this.preSelected  = [];
     this.sending      = false;
     this._sendUid     = null;
+    this._sendMeta    = null;
     this._cancelled   = new Set();
     this._permResolve = null;
     this._permTimer   = null;
@@ -237,7 +256,6 @@ class PeerDrop {
     if (this.pc) { try { this.pc.close(); } catch(_){} }
 
     this._connected = false;
-    this._iceQ = [];
     this.pc = new RTCPeerConnection(ICE);
 
     this.pc.onicecandidate = ({ candidate }) => {
@@ -273,7 +291,10 @@ class PeerDrop {
       if (st === 'failed') {
         this.log('ICE failed — connection could not be established');
         this._stopHeartbeat();
-        this._showDisconnectPopup('WiFi connection failed.', 'ICE negotiation failed — check both devices are on the same WiFi network.');
+        this._showDisconnectPopup(
+          'Direct connection failed.',
+          'If both devices are on the same Wi-Fi, check local-network/firewall access. Across different networks, this connection may need a TURN relay; the demo tunnel only carries signaling.'
+        );
       }
     };
 
@@ -462,14 +483,36 @@ class PeerDrop {
   }
 
   async _drain() {
-    if (!this.queue.length) { this.sending = false; return; }
+    if (this.sending) return;
     this.sending = true;
-    await this._send(this.queue.shift());
-    this._drain();
+    try {
+      while (this.queue.length) {
+        const file = this.queue.shift();
+        try {
+          await this._send(file);
+        } catch (error) {
+          this.log(`Transfer failed for "${file.name}": ${error.message}`);
+          this._sig(JSON.stringify({ t: 'cancel' }));
+          this._markFailed(file._uid, error.message);
+          this.toast(`Transfer failed: ${error.message}`, 'error');
+          clearTimeout(this._completeTimer);
+          this._completeTimer = null;
+          this._completeResolve = null;
+          this._sendMeta = null;
+          await this._releaseWakeLock();
+        }
+      }
+    } finally {
+      this.sending = false;
+    }
   }
 
   async _send(file) {
     this._sendUid  = file._uid;
+    this._sendMeta = {
+      name: file.name.replace(/[^\w.\- ]+/g, '_') || 'file',
+      size: file.size,
+    };
     this._sendAbort = false;
     this.log(`Sending: "${file.name}" (${fmt(file.size)})`);
     file._description = await this._describeFile(file);
@@ -480,6 +523,7 @@ class PeerDrop {
     if (!ok || this._cancelled.has(file._uid)) {
       this.log(`Send cancelled/rejected: ${file.name}`);
       this._markReject(file._uid);
+      this._sendMeta = null;
       return;
     }
 
@@ -490,11 +534,11 @@ class PeerDrop {
     let lastUI  = 0;
     let sent    = 0;
 
-    this._sig(JSON.stringify({
-      t: 'start', name: file.name.replace(/[^\w.\- ]+/g, '_'),
-      size: file.size, mime: file.type || 'application/octet-stream',
+    if (!this._sig(JSON.stringify({
+      t: 'start', name: this._sendMeta.name,
+      size: file.size, mime: (file.type || 'application/octet-stream').slice(0, 120),
       chunks: total
-    }));
+    }))) throw new Error('The connection closed before the file transfer could start.');
 
     this.log(`Chunking: ${total} × ${CHUNK >> 10} KB`);
 
@@ -511,6 +555,7 @@ class PeerDrop {
         this.log(`Aborting send at chunk ${i}/${total} — _sendAbort=${this._sendAbort}`);
         this._sig(JSON.stringify({ t: 'cancel' }));
         this._markCancel(file._uid);
+        this._sendMeta = null;
         await this._releaseWakeLock();
         return;
       }
@@ -523,20 +568,29 @@ class PeerDrop {
       // Wait for DC — brief retry handles momentary blips
       let waited = 0;
       while (this.dc?.readyState !== 'open') {
-        if (waited > 8000) { this.toast('Connection lost during transfer', 'error'); await this._releaseWakeLock(); return; }
+        if (this._sendAbort || this._cancelled.has(file._uid)) {
+          this._sig(JSON.stringify({ t: 'cancel' }));
+          this._markCancel(file._uid);
+          this._sendMeta = null;
+          await this._releaseWakeLock();
+          return;
+        }
+        if (waited >= 30_000) throw new Error('The connection was lost during transfer.');
         this.log(`DC not open (${this.dc?.readyState}) — waiting 200 ms`);
         await new Promise(r => setTimeout(r, 200));
         waited += 200;
       }
 
       // Backpressure
-      while (this.dc.bufferedAmount >= BUF_HI) {
+      while (this.dc?.readyState === 'open' && this.dc.bufferedAmount >= BUF_HI) {
+        const channel = this.dc;
         await new Promise(r => {
-          const h = () => { this.dc.removeEventListener('bufferedamountlow', h); r(); };
-          this.dc.addEventListener('bufferedamountlow', h);
-          setTimeout(() => { this.dc.removeEventListener('bufferedamountlow', h); r(); }, 100);
+          const h = () => { channel.removeEventListener('bufferedamountlow', h); r(); };
+          channel.addEventListener('bufferedamountlow', h);
+          setTimeout(() => { channel.removeEventListener('bufferedamountlow', h); r(); }, 100);
         });
       }
+      if (this.dc?.readyState !== 'open') throw new Error('The connection closed before the next file chunk could be sent.');
 
       this.dc.send(buf);
       sent += buf.byteLength;
@@ -554,27 +608,41 @@ class PeerDrop {
     // Wait for bufferedAmount to drain to 0 (all bytes delivered to OS)
     if (this.dc && this.dc.readyState === 'open') {
       this.log('All chunks sent — waiting for DC buffer to drain to 0…');
+      const drainDeadline = Date.now() + 60_000;
       while (this.dc.bufferedAmount > 0) {
+        if (this.dc.readyState !== 'open') throw new Error('The connection closed before all file data was sent.');
+        if (Date.now() >= drainDeadline) throw new Error('Timed out waiting for the connection to finish sending data.');
         await new Promise(r => setTimeout(r, 50));
       }
       this.log('DC buffer drained to 0 — sending end signal');
     }
 
-    this._sig(JSON.stringify({ t: 'end', size: file.size, chunks: total }));
+    if (this.dc?.readyState !== 'open') throw new Error('The connection closed before the file transfer could finish.');
+    if (!this._sig(JSON.stringify({ t: 'end', size: file.size, chunks: total }))) {
+      throw new Error('Could not send the end-of-file marker.');
+    }
 
     // Wait for receiver's "file-complete" ack (max 15 s)
     this.log('Waiting for file-complete ack from receiver…');
     const acked = await new Promise(resolve => {
       this._completeResolve = resolve;
       this._completeTimer = setTimeout(() => {
-        this.log('file-complete ack timed out (15 s) — proceeding anyway');
+        this.log('file-complete ack timed out (15 s)');
         resolve(false);
       }, 15_000);
     });
+    this._completeResolve = null;
+    clearTimeout(this._completeTimer);
+    this._completeTimer = null;
 
-    this._finishSend(file._uid);
+    if (acked) this._finishSend(file._uid);
+    else {
+      this._markFailed(file._uid, 'The receiver did not confirm the completed file.');
+      this.toast(`The receiver did not confirm "${file.name}".`, 'error');
+    }
+    this._sendMeta = null;
     await this._releaseWakeLock();
-    this.log(`✅ Sent: "${file.name}" ${acked ? '(ack received)' : '(no ack, timed out)'}`);
+    this.log(`${acked ? '✅ Sent' : '⚠️ Not confirmed'}: "${file.name}"`);
     this.log('Connection stays open — ready for next file');
   }
 
@@ -582,9 +650,23 @@ class PeerDrop {
   // RECEIVER
   // ═══════════════════════════════════════════════════════════════
   _ingestChunk(buf) {
-    if (this._rxCancel) return;
+    if (this._rxCancel || !this.rxMeta) {
+      this.log('Discarding file data received without an active transfer');
+      if (!this._rxCancel) this._sig(JSON.stringify({ t: 'cancel' }));
+      return;
+    }
+    const byteLength = buf instanceof ArrayBuffer
+      ? buf.byteLength
+      : ArrayBuffer.isView(buf)
+        ? buf.byteLength
+        : 0;
+    if (!byteLength || byteLength > CHUNK || this.rxChunks.length >= this.rxMeta.chunks
+      || this.rxBytes + byteLength > this.rxMeta.size) {
+      this._failRx('The incoming file data was invalid or exceeded its declared size.');
+      return;
+    }
     this.rxChunks.push(buf);
-    this.rxBytes += buf.byteLength;
+    this.rxBytes += byteLength;
 
     const now = Date.now();
     if (now - this._lastRxUI >= UI_MS) {
@@ -595,36 +677,49 @@ class PeerDrop {
       this._lastRxUI = now;
     }
 
-    if (this.rxMeta && this.rxBytes >= this.rxMeta.size && !this._rxCancel) {
-      this._completeRx();
-    }
   }
 
   _completeRx() {
     if (!this.rxMeta || this._rxCancel) return;
-    this.log(`✅ Received: "${this.rxMeta.name}" (${fmt(this.rxMeta.size)}) — sending file-complete ack`);
+    try {
+      const meta = this.rxMeta;
+      if (this.rxBytes !== meta.size || this.rxChunks.length !== meta.chunks) {
+        this._failRx('The received file did not match its declared size.');
+        return;
+      }
+      const blob = new Blob(this.rxChunks, { type: meta.mime });
+      if (blob.size !== meta.size) throw new Error('The assembled file size did not match its metadata.');
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: meta.name });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
-    // Send ack to sender BEFORE triggering download (keeps pipeline going)
-    this._sig(JSON.stringify({ t: 'file-complete', name: this.rxMeta.name, size: this.rxMeta.size }));
+      this._sig(JSON.stringify({ t: 'file-complete', name: meta.name, size: meta.size }));
+      this._updateRx(1, 0, 0);
+      this._finishRx();
+      this.toast(`"${meta.name}" download started`, 'success');
+      this._releaseWakeLock();
+      this.rxChunks = [];
+      this.rxMeta = null;
+      this._rxCancel = false;
+      this.log('Receive state reset — connection stays open for next file');
+    } catch (error) {
+      this._failRx(`Could not prepare the received file for download: ${error.message}`);
+    }
+  }
 
-    const blob = new Blob(this.rxChunks, { type: this.rxMeta.mime });
-    const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement('a'), { href: url, download: this.rxMeta.name });
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-
-    this._updateRx(1, 0, 0);
-    this._finishRx();
-    this.toast(`"${this.rxMeta.name}" saved!`, 'success');
+  _failRx(message) {
+    this._sig(JSON.stringify({ t: 'cancel' }));
+    if (this.rxMeta && this._rxId) this._markFailed(this._rxId, message);
+    this.rxChunks = [];
+    this.rxMeta = null;
+    this.rxBytes = 0;
+    this._rxCancel = true;
     this._releaseWakeLock();
-
-    // Reset receive state — leave connection open
-    this.rxChunks  = [];
-    this.rxMeta    = null;
-    this._rxCancel = false;
-    this.log('Receive state reset — connection stays open for next file');
+    this.log(message);
+    this.toast(message, 'error');
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -661,20 +756,30 @@ class PeerDrop {
         break;
 
       case 'start':
+        if (this.rxMeta || typeof m.name !== 'string' || !m.name || m.name.length > 255
+          || !Number.isSafeInteger(m.size) || m.size < 0
+          || !Number.isSafeInteger(m.chunks) || m.chunks !== Math.ceil(m.size / CHUNK)
+          || typeof m.mime !== 'string' || m.mime.length > 120) {
+          this._failRx('The sender provided invalid file metadata.');
+          break;
+        }
         this._rxCancel = false;
-        this.rxMeta    = m;
+        this.rxMeta    = {
+          ...m,
+          name: m.name.replace(/[\\/\u0000-\u001f\u007f]/g, '_').slice(0, 255) || 'file',
+        };
         this.rxChunks  = [];
         this.rxBytes   = 0;
         this.rxStart   = Date.now();
         this._lastRxUI = 0;
         this._addRxUI(m);
         this._acquireWakeLock();
-        this.log(`Receiving: "${m.name}" (${fmt(m.size)})`);
+        this.log(`Receiving: "${this.rxMeta.name}" (${fmt(m.size)})`);
         break;
 
       case 'cancel':
         this.log('Peer cancelled transfer');
-        if (this._rxId)    this._markCancelRx();
+        if (this.rxMeta) this._markCancelRx();
         if (this._sendUid) { this._sendAbort = true; this._cancelled.add(this._sendUid); }
         if (this._permResolve) { this._permResolve(false); this._permResolve = null; }
         this.toast('Transfer cancelled by peer', 'error');
@@ -682,17 +787,20 @@ class PeerDrop {
         break;
 
       case 'end':
-        // Trigger completion if bytes haven't arrived yet
-        if (this.rxMeta && this.rxBytes >= m.size && !this._rxCancel) {
-          this._completeRx();
-        }
+        if (!this.rxMeta) break;
+        if (m.size !== this.rxMeta.size || m.chunks !== this.rxMeta.chunks) {
+          this._failRx('The sender ended the transfer with mismatched file metadata.');
+        } else if (this.rxBytes !== this.rxMeta.size || this.rxChunks.length !== this.rxMeta.chunks) {
+          this._failRx('The transfer ended before all file data arrived.');
+        } else this._completeRx();
         break;
 
       case 'file-complete':
-        // Receiver has confirmed it got all bytes → unblock sender
-        this.log(`file-complete ack received for "${m.name}"`);
-        clearTimeout(this._completeTimer);
-        if (this._completeResolve) { this._completeResolve(true); this._completeResolve = null; }
+        if (this._sendMeta && m.name === this._sendMeta.name && m.size === this._sendMeta.size) {
+          this.log(`file-complete ack received for "${m.name}"`);
+          clearTimeout(this._completeTimer);
+          if (this._completeResolve) { this._completeResolve(true); this._completeResolve = null; }
+        }
         break;
     }
   }
@@ -703,7 +811,12 @@ class PeerDrop {
   _askPermission(file) {
     return new Promise(resolve => {
       this._permResolve = resolve;
-      this._sig(JSON.stringify({ t: 'file-request', name: file.name, size: file.size, mime: file.type || '', description: file._description || '' }));
+      if (!this._sig(JSON.stringify({ t: 'file-request', name: file.name, size: file.size, mime: file.type || '', description: file._description || '' }))) {
+        this._permResolve = null;
+        this.toast('The connection is unavailable. Try reconnecting.', 'error');
+        resolve(false);
+        return;
+      }
       this._permTimer = setTimeout(() => {
         if (this._permResolve) { this._permResolve(false); this._permResolve = null; this.toast('Permission timed out', 'error'); }
       }, PERM_T);
@@ -751,7 +864,7 @@ class PeerDrop {
     $('camera-overlay').classList.remove('hidden');
     $('scanner-status').textContent = 'Starting camera…';
     try {
-      if (typeof Html5Qrcode === 'undefined') throw new Error('QR engine not loaded');
+      await loadQrScanner();
       if (!this.qrScanner) this.qrScanner = new Html5Qrcode('qr-reader');
       this.cameras = await Html5Qrcode.getCameras();
       if (!this.cameras?.length) throw new Error('No camera found');
@@ -811,6 +924,11 @@ class PeerDrop {
   // ═══════════════════════════════════════════════════════════════
   // UI RENDERING
   // ═══════════════════════════════════════════════════════════════
+  _pairingBaseUrl(localIP, port) {
+    const isLoopback = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname);
+    return isLoopback && localIP ? `http://${localIP}:${port}` : location.origin;
+  }
+
   _renderWaiting(roomId, token, localIP, port) {
     $('room-code-display').textContent = roomId;
     const recv = this.role === 'receiver';
@@ -818,7 +936,7 @@ class PeerDrop {
       ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00d9aa;margin-right:6px;animation:pulseDot 1.5s infinite"></span>Ready — Waiting for Sender'
       : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00d9aa;margin-right:6px;animation:pulseDot 1.5s infinite"></span>Ready — Waiting for Connection';
     $('qr-instruction-text').innerHTML = recv ? '📷 Scan this QR with sending device' : '📷 Scan this QR to connect';
-    const base = localIP ? `http://${localIP}:${port}` : location.origin;
+    const base = this._pairingBaseUrl(localIP, port);
     const url  = `${base}/?room=${roomId}&token=${token}`;
     const ip   = $('local-ip-badge');
     if (ip) ip.textContent = localIP ? `${localIP}:${port}` : location.host;
@@ -840,7 +958,7 @@ class PeerDrop {
     qrEl.innerHTML = '';
     if (this.isHost) {
       box.classList.remove('hidden');
-      const base = this._hostIP ? `http://${this._hostIP}:${this._hostPort || 3000}` : location.origin;
+      const base = this._pairingBaseUrl(this._hostIP, this._hostPort || 3000);
       const url  = `${base}/?room=${this.roomId}&token=${this.token || ''}`;
       try { new QRCode(qrEl, { text: url, width: 150, height: 150, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M }); }
       catch(_) { qrEl.textContent = url; }
@@ -864,7 +982,15 @@ class PeerDrop {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     const t = $(`screen-${id}`);
     if (t) t.classList.add('active');
-    $('room-chat').classList.toggle('hidden', id === 'home' || !this.roomId);
+    document.body.classList.toggle('local-chat-active', id === 'local-chat');
+    $('room-chat').classList.toggle('hidden', id === 'home' || id === 'local-chat' || !this.roomId);
+    document.querySelectorAll('.sidebar-link').forEach(link => {
+      const active = (id === 'home' && link.id === 'nav-send')
+        || (id === 'transfer' && link.id === 'nav-chat');
+      link.classList.toggle('active', active);
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
   }
 
   toast(msg, type = 'info') {
@@ -926,6 +1052,15 @@ class PeerDrop {
     el.classList.add('done');
     // Show the "Send another / Done" bar but do NOT call reset()
     this._showDoneBar();
+  }
+
+  _markFailed(id, message) {
+    const el = document.getElementById(id); if (!el) return;
+    el.querySelector('.tf-status').textContent = message || 'Transfer failed';
+    el.querySelector('.tf-speed').textContent = '';
+    el.querySelector('.tf-eta').textContent = '';
+    const b = el.querySelector('.tf-cancel'); if (b) b.disabled = true;
+    el.classList.add('cancelled');
   }
 
   _markReject(id) {
@@ -997,6 +1132,7 @@ class PeerDrop {
   _cancelRx(el) {
     this._rxCancel = true;
     this.rxChunks  = []; this.rxBytes = 0;
+    this.rxMeta = null;
     this._sig(JSON.stringify({ t: 'cancel' }));
     if (el) { el.querySelector('.tf-status').textContent = 'Cancelled'; el.querySelector('.tf-cancel').disabled = true; el.classList.add('cancelled'); }
     this.toast('Cancelled', 'info');
@@ -1004,12 +1140,16 @@ class PeerDrop {
   }
 
   _markCancelRx() {
-    const el = document.getElementById(this._rxId); if (!el) return;
-    el.querySelector('.tf-status').textContent = 'Cancelled by sender';
-    el.querySelector('.tf-fill').style.width   = '0%';
-    const b = el.querySelector('.tf-cancel'); if (b) b.disabled = true;
-    el.classList.add('cancelled');
+    const el = document.getElementById(this._rxId);
+    if (el) {
+      el.querySelector('.tf-status').textContent = 'Cancelled by sender';
+      el.querySelector('.tf-fill').style.width   = '0%';
+      const b = el.querySelector('.tf-cancel'); if (b) b.disabled = true;
+      el.classList.add('cancelled');
+    }
     this.rxChunks = []; this.rxBytes = 0;
+    this.rxMeta = null;
+    this._rxCancel = true;
   }
 
   // Show the action bar WITHOUT disconnecting
@@ -1026,8 +1166,8 @@ class PeerDrop {
     }).catch(() => {});
     this._refreshRooms();
     this._discoveryTimer = setInterval(() => {
-      if (!this.roomId) this._refreshRooms();
-    }, 5000);
+      if (!document.hidden && !this.roomId) this._refreshRooms();
+    }, 15_000);
   }
 
   async _refreshRooms() {
@@ -1237,119 +1377,271 @@ class PeerDrop {
   // UI BINDINGS
   // ═══════════════════════════════════════════════════════════════
   _bindUI() {
-    $('recv-create-btn').onclick = () => {
+    const themeToggle = $('theme-toggle');
+    const applyTheme = theme => {
+      document.body.dataset.theme = theme;
+      if (themeToggle) {
+        const dark = theme === 'dark';
+        themeToggle.textContent = dark ? 'Light mode' : 'Dark mode';
+        themeToggle.setAttribute('aria-label', `Switch to ${dark ? 'light' : 'dark'} theme`);
+        themeToggle.setAttribute('aria-pressed', String(dark));
+      }
+      const themeColor = $('theme-color');
+      if (themeColor) themeColor.content = theme === 'dark' ? '#07070f' : '#f5f7fb';
+    };
+    applyTheme(localStorage.getItem('peerdrop-theme') === 'dark' ? 'dark' : 'light');
+    if (themeToggle) {
+      themeToggle.addEventListener('click', () => {
+        console.log('[PeerDrop] Button click: theme-toggle');
+        const theme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('peerdrop-theme', theme);
+        applyTheme(theme);
+      });
+    }
+
+    const safeBind = (id, handler, label) => {
+      const el = $(id);
+      if (!el) {
+        console.warn(`[PeerDrop] Missing element #${id} while binding ${label}`);
+        return;
+      }
+      el.addEventListener('click', event => {
+        console.log(`[PeerDrop] Button click: ${label}`);
+        handler(event);
+      });
+    };
+
+    const setActiveNav = id => {
+      document.querySelectorAll('.sidebar-link').forEach(link => {
+        const active = link.id === id;
+        link.classList.toggle('active', active);
+        if (active) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
+      });
+    };
+    const scrollWorkspaceTo = id => {
+      const workspace = document.querySelector('.workspace');
+      const target = $(id);
+      if (!workspace || !target) return;
+      const top = workspace.scrollTop + target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 20;
+      workspace.scrollTo({ top, behavior: 'smooth' });
+    };
+    safeBind('nav-send', () => {
+      this._showScreen('home');
+      setActiveNav('nav-send');
+    }, 'nav-send');
+    safeBind('nav-devices', () => {
+      this._showScreen('home');
+      setActiveNav('nav-devices');
+      scrollWorkspaceTo('nearby-devices');
+    }, 'nav-devices');
+    safeBind('nav-chat', () => {
+      if (!this.roomId) {
+        this.toast('Connect to a peer to open room chat.', 'info');
+        return;
+      }
+      this._showScreen('transfer');
+      setActiveNav('nav-chat');
+      scrollWorkspaceTo('room-chat');
+    }, 'nav-chat');
+    safeBind('nav-theme', () => themeToggle?.click(), 'nav-theme');
+
+    safeBind('recv-create-btn', () => {
       this.role = 'receiver';
       this.socket.emit('create-room', { displayName: this._getDisplayName() });
-    };
-    $('refresh-rooms-btn').onclick = () => this._refreshRooms();
+    }, 'recv-create-btn');
+    safeBind('refresh-rooms-btn', () => this._refreshRooms(), 'refresh-rooms-btn');
     $('display-name').onchange = () => this._getDisplayName();
 
     const sb = $('send-open-btn'), sp = $('send-panel');
-    if (sb && sp) sb.onclick = () => { this.role = 'sender'; sp.classList.toggle('hidden'); };
+    if (sb && sp) {
+      sb.addEventListener('click', event => {
+        console.log('[PeerDrop] Button click: send-open-btn');
+        this.role = 'sender';
+        sp.classList.toggle('hidden');
+      });
+    }
 
     const pb = $('send-pick-btn'), pf = $('pre-send-file-input');
     if (pb && pf) {
-      pb.onclick = () => pf.click();
-      pf.onchange = e => {
-        const files = Array.from(e.target.files);
-        if (files.length) {
-          this.preSelected = files;
-          const sz = files.reduce((a, f) => a + f.size, 0);
-          pb.classList.add('selected');
-          $('selected-files-label').textContent = `✓ ${files.length} file(s) (${fmt(sz)})`;
-          this.toast(`${files.length} file(s) ready. Scan QR!`, 'success');
-        }
+      const selectPreFiles = files => {
+        if (!files.length) return;
+        this.preSelected = files;
+        const sz = files.reduce((a, f) => a + f.size, 0);
+        pb.classList.add('selected');
+        $('selected-files-label').textContent = `✓ ${files.length} file(s) (${fmt(sz)})`;
+        this.toast(`${files.length} file(s) ready. Scan QR!`, 'success');
       };
+      pb.addEventListener('click', event => {
+        console.log('[PeerDrop] Button click: send-pick-btn');
+        pf.click();
+      });
+      pf.onchange = e => selectPreFiles(Array.from(e.target.files));
+      const folderButton = $('send-folder-btn');
+      const folderInput = $('pre-send-folder-input');
+      if (folderButton && folderInput) {
+        folderButton.addEventListener('click', () => folderInput.click());
+        folderInput.onchange = e => {
+          selectPreFiles(Array.from(e.target.files));
+          folderInput.value = '';
+        };
+      }
+      const sendPanel = $('send-panel');
+      if (sendPanel) {
+        sendPanel.ondragenter = sendPanel.ondragover = event => {
+          event.preventDefault();
+          sendPanel.classList.add('is-dragover');
+        };
+        sendPanel.ondragleave = event => {
+          if (!sendPanel.contains(event.relatedTarget)) sendPanel.classList.remove('is-dragover');
+        };
+        sendPanel.ondrop = event => {
+          event.preventDefault();
+          sendPanel.classList.remove('is-dragover');
+          selectPreFiles(Array.from(event.dataTransfer.files));
+        };
+      }
     }
 
-    $('open-camera-btn').onclick   = () => { this.role = 'sender'; this._startScanner(); };
-    $('close-camera-btn').onclick  = () => this._stopScanner();
-    $('switch-camera-btn').onclick = () => this._switchCam();
-    $('sender-make-qr-link').onclick = () => {
+    safeBind('paste-link-btn', async () => {
+      if (!navigator.clipboard?.readText) {
+        this.toast('Clipboard access is unavailable. Enter the room code manually.', 'error');
+        $('join-input')?.focus();
+        return;
+      }
+      try {
+        const invite = (await navigator.clipboard.readText()).trim();
+        let room = null, token = null;
+        try {
+          const url = new URL(invite);
+          room = url.searchParams.get('room');
+          if (room) room = room.toUpperCase();
+          token = url.searchParams.get('token');
+        } catch (_) {}
+        if (!room && /^[A-Z0-9]{6}$/i.test(invite)) {
+          room = invite.toUpperCase();
+        } else if (!room && /^[A-Z0-9]{6}:[^\s]+$/i.test(invite)) {
+          [room, token] = invite.split(':', 2);
+          room = room.toUpperCase();
+        }
+        if (!room || !/^[A-Z0-9]{6}$/.test(room)) {
+          this.toast('Clipboard does not contain a valid PeerDrop link or room code.', 'error');
+          return;
+        }
+        $('join-input').value = room;
+        this.role = 'sender';
+        this.token = token;
+        this._joinRoom(room, token);
+      } catch (error) {
+        this.log(`Could not read invite from clipboard: ${error.message}`);
+        this.toast('Could not read the clipboard. Enter the room code manually.', 'error');
+        $('join-input')?.focus();
+      }
+    }, 'paste-link-btn');
+    safeBind('open-camera-btn', () => { this.role = 'sender'; this._startScanner(); }, 'open-camera-btn');
+    safeBind('close-camera-btn', () => this._stopScanner(), 'close-camera-btn');
+    safeBind('switch-camera-btn', () => this._switchCam(), 'switch-camera-btn');
+    safeBind('sender-make-qr-link', () => {
       this.role = 'sender';
       this.socket.emit('create-room', { displayName: this._getDisplayName() });
-    };
+    }, 'sender-make-qr-link');
 
     const ji = $('join-input');
-    $('join-btn').onclick = () => {
-      const c = ji.value.trim().toUpperCase();
-      if (c.length === 6) this._joinRoom(c, this.token);
-      else this.toast('Enter 6-char code', 'error');
-    };
-    ji.oninput   = e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); };
-    ji.onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
+    if (ji) {
+      $('join-btn').addEventListener('click', () => {
+        console.log('[PeerDrop] Button click: join-btn');
+        const c = ji.value.trim().toUpperCase();
+        if (c.length === 6) this._joinRoom(c, this.token);
+        else this.toast('Enter 6-char code', 'error');
+      });
+      ji.oninput   = e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); };
+      ji.onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
+    }
 
-    $('copy-btn').onclick = () => {
+    safeBind('copy-btn', () => {
       if (!this.roomId) return;
       navigator.clipboard.writeText(this.roomId).then(() => this.toast('Copied!', 'success')).catch(() => this.toast('Failed', 'error'));
-    };
+    }, 'copy-btn');
 
     // ── Navigation — these call reset() which properly cleans up ──
-    $('back-btn').onclick       = () => this.reset();
-    $('new-session-btn').onclick = () => this.reset();
+    safeBind('back-btn', () => this.reset(), 'back-btn');
+    safeBind('new-session-btn', () => this.reset(), 'new-session-btn');
 
     // "Done" button: ONLY clears the transfer list, does NOT disconnect
-    $('done-btn').onclick = () => {
+    safeBind('done-btn', () => {
       this.log('"Send more" tapped — clearing transfer list, keeping connection open');
       $('transfer-list').innerHTML = '';
       const bar = $('done-bar'); if (bar) bar.classList.add('hidden');
       this.toast('Ready to send more files!', 'success');
-    };
+    }, 'done-btn');
 
     // Connection Info modal
-    $('conn-info-btn').onclick    = () => this._showConnectionInfo();
-    $('ci-close-btn').onclick     = () => this._hideConnectionInfo();
-    $('ci-reconnect-btn').onclick = () => this._reconnectPeer();
-    $('ci-copy-btn').onclick      = () => {
+    safeBind('conn-info-btn', () => this._showConnectionInfo(), 'conn-info-btn');
+    safeBind('ci-close-btn', () => this._hideConnectionInfo(), 'ci-close-btn');
+    safeBind('ci-reconnect-btn', () => this._reconnectPeer(), 'ci-reconnect-btn');
+    safeBind('ci-copy-btn', () => {
       if (!this.roomId) return;
       navigator.clipboard.writeText(this.roomId).then(() => this.toast('Copied!', 'success')).catch(() => this.toast('Failed', 'error'));
-    };
+    }, 'ci-copy-btn');
 
     // Disconnect popup buttons
-    $('dc-reconnect-btn').onclick = () => this._dcPopupReconnect();
-    $('dc-home-btn').onclick      = () => { this._hideDCPopup(); this.reset(); };
+    safeBind('dc-reconnect-btn', () => this._dcPopupReconnect(), 'dc-reconnect-btn');
+    safeBind('dc-home-btn', () => { this._hideDCPopup(); this.reset(); }, 'dc-home-btn');
 
-    $('join-request-accept').onclick = () => {
+    safeBind('join-request-accept', () => {
       const request = this._joinRequests.shift();
       if (request) this.socket.emit('approve-join', { peerId: request.peerId });
       this._showNextJoinRequest();
-    };
-    $('join-request-decline').onclick = () => {
+    }, 'join-request-accept');
+    safeBind('join-request-decline', () => {
       const request = this._joinRequests.shift();
       if (request) this.socket.emit('decline-join', { peerId: request.peerId });
       this._showNextJoinRequest();
-    };
+    }, 'join-request-decline');
 
-    $('chat-form').onsubmit = (event) => {
-      event.preventDefault();
-      const input = $('chat-input');
-      const text = input.value.trim();
-      if (!text || !this.roomId) return;
-      this.socket.emit('chat-message', { text, to: $('chat-recipient').value || null });
-      input.value = '';
-    };
+    const chatForm = $('chat-form');
+    if (chatForm) {
+      chatForm.addEventListener('submit', event => {
+        event.preventDefault();
+        console.log('[PeerDrop] Button click: chat-form submit');
+        const input = $('chat-input');
+        const text = input.value.trim();
+        if (!text || !this.roomId) return;
+        this.socket.emit('chat-message', { text, to: $('chat-recipient').value || null });
+        input.value = '';
+      });
+    }
 
     // Permission modal
-    $('pm-accept').onclick = () => {
+    safeBind('pm-accept', () => {
       this._hidePermModal();
       this._sig(JSON.stringify({ t: 'file-accept' }));
       this._pendingMeta = null;
-    };
-    $('pm-reject').onclick = () => {
+    }, 'pm-accept');
+    safeBind('pm-reject', () => {
       this._hidePermModal();
       this._sig(JSON.stringify({ t: 'file-reject' }));
       this._pendingMeta = null;
       this.toast('Rejected', 'info');
-    };
+    }, 'pm-reject');
 
     // Drop zone
     const dz = $('dropzone'), fi = $('file-input');
-    $('browse-btn').onclick = e => { e.stopPropagation(); fi.click(); };
-    dz.onclick     = () => fi.click();
-    dz.ondragenter = dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag-over'); };
-    dz.ondragleave = e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('drag-over'); };
-    dz.ondrop      = e => { e.preventDefault(); dz.classList.remove('drag-over'); const f = Array.from(e.dataTransfer.files); if (f.length) this.enqueue(f); };
-    fi.onchange    = e => { this.enqueue(Array.from(e.target.files)); fi.value = ''; };
+    if (dz && fi) {
+      $('browse-btn').addEventListener('click', event => {
+        console.log('[PeerDrop] Button click: browse-btn');
+        event.stopPropagation();
+        fi.click();
+      });
+      dz.onclick = () => {
+        console.log('[PeerDrop] Button click: dropzone');
+        fi.click();
+      };
+      dz.ondragenter = dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag-over'); };
+      dz.ondragleave = e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('drag-over'); };
+      dz.ondrop      = e => { e.preventDefault(); dz.classList.remove('drag-over'); const f = Array.from(e.dataTransfer.files); if (f.length) this.enqueue(f); };
+      fi.onchange    = e => { this.enqueue(Array.from(e.target.files)); fi.value = ''; };
+    }
   }
 }
 

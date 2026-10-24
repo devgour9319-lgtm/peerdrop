@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PeerDrop — Direct WiFi File Sharing</title>
   <meta name="description" content="Share files directly over WiFi. No internet. No cloud. Browser to browser." />
+  <meta name="theme-color" content="#f5f7fb" id="theme-color" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -14,7 +15,7 @@
   <link rel="manifest" href="/manifest.json" />
 </head>
 <body>
-<div id="app">
+<div id="app" class="app-layout">
 
   <!-- ── Header ────────────────────────────────────────────── -->
   <header class="site-header">
@@ -33,130 +34,127 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>
           <span id="wifi-label">📶 WiFi Ready</span>
         </div>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">Dark mode</button>
       </div>
     </div>
   </header>
 
+  <aside class="app-sidebar" aria-label="Main navigation">
+    <nav class="sidebar-nav">
+      <button class="sidebar-link active" id="nav-send" type="button" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">↗</span><span>Send &amp; receive</span>
+      </button>
+      <button class="sidebar-link" id="nav-devices" type="button">
+        <span class="nav-icon" aria-hidden="true">⌘</span><span>Nearby devices</span>
+      </button>
+      <button class="sidebar-link" id="nav-chat" type="button">
+        <span class="nav-icon" aria-hidden="true">☷</span><span>Room chat</span>
+      </button>
+      <button class="sidebar-link" id="nav-theme" type="button">
+        <span class="nav-icon" aria-hidden="true">⚙</span><span>Appearance</span>
+      </button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="inbox-card">
+        <span class="inbox-icon" aria-hidden="true">⌑</span>
+        <span><strong>Private transfers</strong><small>Connect directly over Wi-Fi</small></span>
+      </div>
+      <p class="sidebar-footnote"><span aria-hidden="true">◇</span> Your files never touch the cloud.</p>
+    </div>
+  </aside>
+  <main class="workspace">
+
   <!-- ══════════════════════════════════════════════════════════
        HOME SCREEN
   ════════════════════════════════════════════════════════════ -->
-  <section id="screen-home" class="screen active">
-
-    <div class="home-hero">
-      <div class="security-pill">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        Direct P2P · No Cloud · No Internet
-      </div>
-      <h1 class="home-title">Browser to Browser<br><span class="home-grad">Instant Transfer</span></h1>
-      <p class="home-sub">Files transfer directly browser-to-browser. Optional AI descriptions analyze supported files on the PeerDrop server's configured Ollama model.</p>
-    </div>
-
-    <!-- Architecture Diagram -->
-    <div class="arch-diagram">
-      <div class="arch-node">📱 Sender</div>
-      <div class="arch-arrow">→ WiFi →</div>
-      <div class="arch-node arch-active">🌐 Browser P2P</div>
-      <div class="arch-arrow">→ WiFi →</div>
-      <div class="arch-node">📱 Receiver</div>
-    </div>
-    <p class="arch-caption">No cloud server in between. Data never leaves your local network.</p>
-
-    <label class="identity-field" for="display-name">
-      <span>Your name in chat</span>
-      <input id="display-name" type="text" maxlength="32" placeholder="Choose a display name" autocomplete="nickname" />
-    </label>
-
-    <!-- Big Send / Receive Actions -->
-    <div class="main-actions">
-      <button class="main-card send-card" id="send-open-btn">
-        <div class="mc-icon-ring send-ring">
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/>
-          </svg>
+  <section id="screen-home" class="screen active dashboard-screen">
+    <div class="home-main">
+      <div class="dashboard-heading">
+        <div class="greeting">
+          <p class="eyebrow">PRIVATE, PEER-TO-PEER SHARING</p>
+          <h1>Share anything,<br /><span>right here.</span></h1>
+          <p class="home-sub">Fast, private transfers between devices on your local network.</p>
         </div>
-        <div class="mc-label">Send Files</div>
-        <div class="mc-desc">Select files &amp; scan receiver's QR</div>
-        <div class="mc-badge">📷 Scan QR to Send</div>
-      </button>
-
-      <button class="main-card recv-card" id="recv-create-btn">
-        <div class="mc-icon-ring recv-ring">
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-        </div>
-        <div class="mc-label">Receive Files</div>
-        <div class="mc-desc">Show QR for sender to scan</div>
-        <div class="mc-badge">📥 Make QR to Receive</div>
-      </button>
-    </div>
-
-    <section class="discovery-panel" aria-labelledby="discovery-title">
-      <div class="discovery-heading">
-        <div>
-          <h2 id="discovery-title">Nearby rooms</h2>
-          <p>Active PeerDrop rooms on this local network</p>
-        </div>
-        <button class="btn-ghost-sm" id="refresh-rooms-btn" type="button">Refresh</button>
+        <label class="identity-field" for="display-name">
+          <span>Your name</span>
+          <input id="display-name" type="text" maxlength="32" placeholder="Choose a name" autocomplete="nickname" />
+        </label>
       </div>
-      <div id="discovery-list" class="discovery-list" aria-live="polite">
-        <p class="discovery-empty">Looking for open rooms…</p>
-      </div>
-    </section>
 
-    <!-- Send Panel -->
-    <div class="recv-panel hidden" id="send-panel">
-      <div class="recv-options">
-        <p class="panel-section-title">Step 1: Choose files, then Scan Receiver's QR</p>
-        <button class="btn-select-files" id="send-pick-btn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          <span id="selected-files-label">Select Files to Send</span>
-        </button>
-        <input type="file" id="pre-send-file-input" multiple hidden />
-        <p class="ai-privacy-note">For descriptions, supported file content is sent to the PeerDrop server for analysis. If the server is hosted remotely, file content goes to that host.</p>
-        <button class="btn-camera-scan" id="open-camera-btn">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          📷 Scan Receiver's QR Code
-        </button>
-        <div class="ac-divider"><span>or enter receiver's code</span></div>
+      <section class="recv-panel send-panel-card" id="send-panel" aria-labelledby="send-panel-title">
+        <div class="upload-symbol" aria-hidden="true">
+          <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+        </div>
+        <h2 id="send-panel-title">Drop files to send</h2>
+        <p class="upload-subtitle">Choose files from your device, then connect to a nearby peer.</p>
+        <div class="upload-actions">
+          <button class="btn-select-files" id="send-pick-btn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span id="selected-files-label">Choose files</span>
+          </button>
+          <input type="file" id="pre-send-file-input" multiple hidden />
+          <input type="file" id="pre-send-folder-input" webkitdirectory directory multiple hidden />
+          <button class="upload-secondary" id="send-folder-btn" type="button">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 10h18"/></svg>
+            Send folder
+          </button>
+          <button class="upload-secondary" id="open-camera-btn" type="button">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2m4 0v2m-6 2h2m2 2h2v-4"/></svg>
+            Scan QR
+          </button>
+          <button class="upload-secondary" id="paste-link-btn" type="button">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 4H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M16 3h4v4"/><path d="M10 14 20 4"/><path d="M8 9h3"/></svg>
+            Paste link
+          </button>
+        </div>
+        <div class="upload-divider"><span>or</span></div>
+        <p class="link-hint"><span aria-hidden="true">♧</span> Enter a room code to connect</p>
         <div class="recv-panel-row">
-          <input id="join-input" class="code-input" type="text" maxlength="6" placeholder="A1B2C3" autocomplete="off" spellcheck="false" />
-          <button class="join-go-btn" id="join-btn" title="Connect">
+          <input id="join-input" class="code-input" type="text" maxlength="6" placeholder="Enter 6-character code" autocomplete="off" spellcheck="false" />
+          <button class="join-go-btn" id="join-btn" type="button" title="Connect" aria-label="Connect">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </button>
         </div>
-        <button class="btn-text-link" id="sender-make-qr-link">Or show my QR code instead →</button>
-      </div>
+        <button class="btn-text-link" id="sender-make-qr-link" type="button">Show my receive QR instead</button>
+        <p class="ai-privacy-note">Supported file descriptions are generated by the PeerDrop host when enabled.</p>
+      </section>
+
+      <section class="discovery-panel devices-section" id="nearby-devices" aria-labelledby="discovery-title">
+        <div class="discovery-heading">
+          <div>
+            <h2 id="discovery-title">Nearby devices</h2>
+            <p>Available rooms on your local Wi-Fi network</p>
+          </div>
+          <button class="btn-ghost-sm" id="refresh-rooms-btn" type="button"><span aria-hidden="true">⟳</span> Refresh</button>
+        </div>
+        <div id="discovery-list" class="discovery-list" aria-live="polite">
+          <p class="discovery-empty">Looking for open rooms…</p>
+        </div>
+      </section>
+      <div class="encryption-note"><span aria-hidden="true">♙</span> End-to-end encrypted direct transfers</div>
     </div>
 
-    <!-- WiFi Setup Guide -->
-    <div class="wlan-guide-card">
-      <div class="wg-icon">📶</div>
-      <div class="wg-content">
-        <h4 class="wg-title">How it Works (No Internet Needed):</h4>
-        <p class="wg-desc">
-          <strong>1.</strong> Both devices connect to the <strong>same WiFi network</strong><br>
-          <strong>2.</strong> <strong>Receiver:</strong> Tap Receive Files → QR appears<br>
-          <strong>3.</strong> <strong>Sender:</strong> Tap Send Files → Select files → Scan QR<br>
-          <strong>4.</strong> Files transfer <strong>directly browser-to-browser</strong> over WiFi!
-        </p>
-        <p class="wg-note">💡 <strong>No WiFi router?</strong> Turn on Mobile Hotspot on one phone, connect the other to it. Then open this page on both devices!</p>
-      </div>
-    </div>
-
-    <!-- Features strip -->
-    <div class="feat-strip">
-      <div class="feat-item"><span class="feat-dot green"></span>Zero Internet</div>
-      <div class="feat-sep">·</div>
-      <div class="feat-item"><span class="feat-dot purple"></span>10–40 MB/s</div>
-      <div class="feat-sep">·</div>
-      <div class="feat-item"><span class="feat-dot teal"></span>E2E Encrypted</div>
-      <div class="feat-sep">·</div>
-      <div class="feat-item"><span class="feat-dot amber"></span>Zero Cloud</div>
-    </div>
-
+    <aside class="home-rail" aria-label="Quick actions">
+      <section class="rail-card receive-card">
+        <p class="eyebrow">QUICK ACTIONS</p>
+        <h2>Receive a file</h2>
+        <p>Let someone nearby send directly to this device.</p>
+        <button class="receive-action" id="recv-create-btn" type="button"><span aria-hidden="true">↓</span> Create receive room</button>
+        <p class="rail-hint">A private pairing code and QR will be created.</p>
+      </section>
+      <section class="rail-card privacy-card">
+        <span class="privacy-icon" aria-hidden="true">◇</span>
+        <div><strong>Direct &amp; private</strong><p>Peer-to-peer over Wi-Fi. No cloud storage or tracking.</p></div>
+      </section>
+      <section class="rail-card connection-card">
+        <p class="eyebrow">HOW IT WORKS</p>
+        <ol>
+          <li>Choose files or select a nearby room.</li>
+          <li>Pair with a six-character code or QR.</li>
+          <li>Send directly over an encrypted connection.</li>
+        </ol>
+      </section>
+    </aside>
   </section>
 
   <!-- ══════════════════════════════════════════════════════════
@@ -263,6 +261,7 @@
     <p id="chat-notice" class="chat-notice hidden">This device is in chat-only mode. File transfer remains available between the room host and its first guest.</p>
   </section>
 
+  </main>
 </div><!-- #app -->
 
 <!-- ── Camera QR Scanner Modal ──────────────────────────────── -->

@@ -2,6 +2,7 @@ node_modules/
 .env
 cloudflared.exe
 append_code.ps1
+PROJECT_DESCRIPTION.md
 
 # OS
 .DS_Store
